@@ -10,7 +10,11 @@ DATABASE_PATH = DATABASE_DIR / "database.db"
 
 # 文件存储配置
 UPLOAD_DIR = BASE_DIR / "uploads"
-MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
+MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2GB (优化后支持大文件)
+
+# 分块上传配置
+CHUNK_SIZE = 5 * 1024 * 1024  # 5MB per chunk (用于分块加密和上传)
+UPLOAD_BUFFER_SIZE = 1024 * 1024  # 1MB (读取缓冲区)
 
 # 文件有效期(小时)
 FILE_EXPIRATION_HOURS = 24
@@ -38,6 +42,8 @@ def init_directories():
     """初始化项目所需目录"""
     DATABASE_DIR.mkdir(exist_ok=True)
     UPLOAD_DIR.mkdir(exist_ok=True)
+    (UPLOAD_DIR / "chunks").mkdir(exist_ok=True)  # 分片临时目录
     print(f"✅ 目录初始化完成:")
     print(f"   - 数据库目录: {DATABASE_DIR}")
     print(f"   - 上传目录: {UPLOAD_DIR}")
+    print(f"   - 分片目录: {UPLOAD_DIR / 'chunks'}")

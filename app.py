@@ -1,8 +1,10 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
+from pydantic import BaseModel
+import os
 
 import config
 import database
@@ -71,13 +73,6 @@ async def health_check():
 
 # ==================== API 接口 ====================
 
-from fastapi import HTTPException, UploadFile, File, Form
-from pydantic import BaseModel
-import os
-import shutil
-from datetime import datetime
-
-
 class CreateTransferRequest(BaseModel):
     public_key: str
 
@@ -96,6 +91,9 @@ async def create_transfer(request: CreateTransferRequest):
         # 创建传输记录
         result = await database.create_transfer(request.public_key)
 
+        # 记录日志
+        await database.log_action(result["url_token"], "created", "生成接收链接")
+
         return {
             "success": True,
             "url_token": result["url_token"],
@@ -113,6 +111,8 @@ async def get_public_key(url_token: str):
     """
     获取指定传输的公钥
     """
+    from datetime import datetime
+
     transfer = await database.get_transfer_by_token(url_token)
     if not transfer:
         raise HTTPException(status_code=404, detail="接收链接不存在或已过期")
@@ -140,7 +140,7 @@ async def upload_file(
         original_filename: str = Form(...)
 ):
     """
-    上传加密文件
+    上传加密文件（兼容旧版整体上传）
     """
     try:
         # 验证传输记录
@@ -178,6 +178,9 @@ async def upload_file(
             os.remove(file_path)
             raise HTTPException(status_code=500, detail="数据库更新失败")
 
+        # 记录日志
+        await database.log_action(url_token, "uploaded", f"文件: {original_filename}, 大小: {file_size}")
+
         print(f"✅ 文件上传成功: {original_filename} ({file_size} bytes)")
 
         return {
@@ -191,6 +194,153 @@ async def upload_file(
     except Exception as e:
         print(f"❌ 上传失败: {e}")
         raise HTTPException(status_code=500, detail=f"上传失败: {str(e)}")
+
+
+# ==================== 新增：分块上传 API ====================
+
+# 临时存储分片信息
+upload_sessions = {}
+
+
+@app.post("/api/upload-chunk/{url_token}")
+async def upload_chunk(
+        url_token: str,
+        chunk: UploadFile = File(...),
+        chunk_index: int = Form(...),
+        total_chunks: int = Form(...),
+        upload_id: str = Form(...),
+        encrypted_aes_key: str = Form(...),
+        original_filename: str = Form(...)
+):
+    """
+    分片上传接口（支持断点续传）
+    """
+    try:
+        # 验证传输记录
+        transfer = await database.get_transfer_by_token(url_token)
+        if not transfer:
+            raise HTTPException(status_code=404, detail="接收链接不存在")
+
+        # 初始化上传会话
+        session_key = f"{url_token}_{upload_id}"
+        if session_key not in upload_sessions:
+            upload_sessions[session_key] = {
+                "chunks": {},
+                "encrypted_aes_key": encrypted_aes_key,
+                "original_filename": original_filename,
+                "total_chunks": total_chunks
+            }
+
+        session = upload_sessions[session_key]
+
+        # 保存分片到临时文件
+        chunk_dir = config.UPLOAD_DIR / "chunks" / session_key
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+
+        chunk_path = chunk_dir / f"chunk_{chunk_index}"
+        with open(chunk_path, "wb") as f:
+            chunk_data = await chunk.read()
+            f.write(chunk_data)
+
+        session["chunks"][chunk_index] = str(chunk_path)
+
+        # 更新数据库进度
+        await database.update_upload_progress(url_token, len(session["chunks"]), total_chunks)
+
+        print(f"✅ 分片 {chunk_index + 1}/{total_chunks} 上传成功")
+
+        return {
+            "success": True,
+            "chunk_index": chunk_index,
+            "uploaded_chunks": len(session["chunks"]),
+            "total_chunks": total_chunks
+        }
+
+    except Exception as e:
+        print(f"❌ 分片上传失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/finalize-upload/{url_token}")
+async def finalize_upload(url_token: str, request: Request):
+    """
+    完成分片上传，合并所有分片
+    """
+    try:
+        body = await request.json()
+        upload_id = body.get("upload_id")
+        file_size = body.get("file_size")
+
+        session_key = f"{url_token}_{upload_id}"
+
+        if session_key not in upload_sessions:
+            raise HTTPException(status_code=404, detail="上传会话不存在")
+
+        session = upload_sessions[session_key]
+
+        # 验证所有分片都已上传
+        if len(session["chunks"]) != session["total_chunks"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"分片不完整: {len(session['chunks'])}/{session['total_chunks']}"
+            )
+
+        # 合并分片
+        final_file_path = config.UPLOAD_DIR / f"{url_token}_{session['original_filename']}"
+
+        with open(final_file_path, "wb") as final_file:
+            for i in range(session["total_chunks"]):
+                chunk_path = session["chunks"][i]
+                with open(chunk_path, "rb") as chunk_file:
+                    final_file.write(chunk_file.read())
+
+                # 删除临时分片
+                os.remove(chunk_path)
+
+        # 删除临时目录
+        chunk_dir = config.UPLOAD_DIR / "chunks" / session_key
+        if chunk_dir.exists():
+            import shutil
+            shutil.rmtree(chunk_dir)
+
+        # 更新数据库
+        success = await database.update_transfer_file(
+            url_token,
+            str(final_file_path),
+            session["encrypted_aes_key"],
+            session["original_filename"],
+            file_size
+        )
+
+        if not success:
+            raise HTTPException(status_code=500, detail="数据库更新失败")
+
+        # 标记上传完成
+        await database.mark_upload_completed(url_token)
+
+        # 记录日志
+        await database.log_action(
+            url_token,
+            "uploaded",
+            f"文件: {session['original_filename']}, 大小: {file_size}, 分片数: {session['total_chunks']}"
+        )
+
+        # 清理会话
+        del upload_sessions[session_key]
+
+        print(f"✅ 文件上传完成: {session['original_filename']} ({file_size} bytes)")
+
+        return {
+            "success": True,
+            "message": "文件上传完成",
+            "file_size": file_size
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ 完成上传失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/receive/{url_token}", response_class=HTMLResponse)
@@ -247,8 +397,6 @@ async def download_encrypted_file(url_token: str):
     """
     下载加密文件
     """
-    from fastapi.responses import FileResponse
-
     transfer = await database.get_transfer_by_token(url_token)
     if not transfer or not transfer['encrypted_file_path']:
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -296,8 +444,8 @@ async def confirm_download(url_token: str):
         # 标记为已下载
         await database.mark_as_downloaded(url_token)
 
-        # 可选：直接删除数据库记录
-        # await database.delete_transfer(url_token)
+        # 记录日志
+        await database.log_action(url_token, "downloaded", f"文件: {transfer['original_filename']}")
 
         return {
             "success": True,
@@ -307,6 +455,45 @@ async def confirm_download(url_token: str):
     except Exception as e:
         print(f"❌ 确认下载失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 统计和日志 API ====================
+
+@app.get("/stats", response_class=HTMLResponse)
+async def stats_page(request: Request):
+    """统计页面"""
+    return templates.TemplateResponse("stats.html", {
+        "request": request
+    })
+
+
+@app.get("/api/statistics")
+async def get_statistics():
+    """获取系统统计信息"""
+    stats = await database.get_statistics()
+    return stats
+
+
+@app.get("/api/recent-logs")
+async def get_recent_logs(limit: int = 20):
+    """获取最近的日志记录"""
+    import aiosqlite
+    async with aiosqlite.connect(database.DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM transfer_logs
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (limit,)) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+@app.get("/api/transfer-logs/{url_token}")
+async def get_transfer_logs(url_token: str):
+    """获取特定传输的日志"""
+    logs = await database.get_transfer_logs(url_token)
+    return logs
 
 
 # ==================== 启动命令 ====================

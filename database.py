@@ -9,6 +9,7 @@ from config import DATABASE_PATH, FILE_EXPIRATION_HOURS, URL_TOKEN_LENGTH
 async def init_database():
     """创建数据库表结构"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        # 传输表
         await db.execute("""
             CREATE TABLE IF NOT EXISTS transfers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,9 +22,27 @@ async def init_database():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 expires_at TIMESTAMP NOT NULL,
                 downloaded BOOLEAN DEFAULT 0,
-                download_at TIMESTAMP
+                download_at TIMESTAMP,
+                upload_started_at TIMESTAMP,
+                upload_completed_at TIMESTAMP,
+                chunks_total INTEGER DEFAULT 0,
+                chunks_uploaded INTEGER DEFAULT 0
             )
         """)
+
+        # 日志表（新增）
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS transfer_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url_token TEXT NOT NULL,
+                action TEXT NOT NULL,
+                details TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         await db.commit()
         print("✅ 数据库表初始化完成")
 

@@ -160,6 +160,93 @@ async function decryptFileWithAES(encryptedData, aesKey, iv) {
     );
 }
 
+// ==================== 新增：分块加密/解密 ====================
+
+/**
+ * 分块加密大文件
+ * @param {File} file
+ * @param {CryptoKey} aesKey
+ * @param {Function} onProgress 进度回调 (percent)
+ * @returns {Promise<{encryptedChunks: Array, iv: Uint8Array}>}
+ */
+async function encryptFileInChunks(file, aesKey, onProgress) {
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const encryptedChunks = [];
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+    for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunk = file.slice(start, end);
+
+        // 读取分块
+        const chunkData = await readFileAsArrayBuffer(chunk);
+
+        // 加密分块
+        const encrypted = await window.crypto.subtle.encrypt(
+            {
+                name: "AES-GCM",
+                iv: iv,
+                additionalData: new TextEncoder().encode(`chunk-${i}`)
+            },
+            aesKey,
+            chunkData
+        );
+
+        encryptedChunks.push(new Uint8Array(encrypted));
+
+        // 更新进度
+        if (onProgress) {
+            onProgress(Math.round((i + 1) / totalChunks * 100));
+        }
+    }
+
+    return { encryptedChunks, iv };
+}
+
+/**
+ * 分块解密大文件
+ * @param {Array<Uint8Array>} encryptedChunks
+ * @param {CryptoKey} aesKey
+ * @param {Uint8Array} iv
+ * @param {Function} onProgress 进度回调
+ * @returns {Promise<ArrayBuffer>}
+ */
+async function decryptFileInChunks(encryptedChunks, aesKey, iv, onProgress) {
+    const decryptedChunks = [];
+
+    for (let i = 0; i < encryptedChunks.length; i++) {
+        const decrypted = await window.crypto.subtle.decrypt(
+            {
+                name: "AES-GCM",
+                iv: iv,
+                additionalData: new TextEncoder().encode(`chunk-${i}`)
+            },
+            aesKey,
+            encryptedChunks[i]
+        );
+
+        decryptedChunks.push(new Uint8Array(decrypted));
+
+        if (onProgress) {
+            onProgress(Math.round((i + 1) / encryptedChunks.length * 100));
+        }
+    }
+
+    // 合并所有分块
+    const totalLength = decryptedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+
+    for (const chunk of decryptedChunks) {
+        result.set(chunk, offset);
+        offset += chunk.length;
+    }
+
+    return result.buffer;
+}
+
 // ==================== RSA 加密 AES 密钥 ====================
 
 /**
