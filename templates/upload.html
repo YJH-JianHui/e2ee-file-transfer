@@ -25,7 +25,7 @@
             <input type="file" id="fileInput" style="display: none;" onchange="handleFileSelect(event)">
             <div class="upload-icon">📁</div>
             <p><strong>点击选择文件</strong> 或拖拽到此处</p>
-            <p class="text-muted">最大支持 500MB</p>
+            <p class="text-muted">最大支持 2048MB</p>
         </div>
         
         <div id="fileInfo" style="display: none;">
@@ -150,10 +150,10 @@ function handleFileSelect(event) {
     const file = event.target.files[0];
     if (!file) return;
 
-    // 检查文件大小 (500MB)
-    const maxSize = 500 * 1024 * 1024;
+    // 检查文件大小 (2048MB)
+    const maxSize = 2048 * 1024 * 1024;
     if (file.size > maxSize) {
-        showError('文件大小超过 500MB 限制');
+        showError('文件大小超过 2048MB 限制');
         return;
     }
 
@@ -177,22 +177,21 @@ async function startUpload() {
         return;
     }
 
-    // 切换到上传界面
     document.getElementById('step-select').style.display = 'none';
     document.getElementById('step-uploading').style.display = 'block';
 
     try {
         const isLargeFile = selectedFile.size > 50 * 1024 * 1024; // 50MB 以上使用分块
 
-        // 2. 生成 AES 密钥
         updateProgress(5, '正在生成加密密钥...');
         const aesKey = await generateAESKey();
 
         let combinedData;
+        let metadata;
 
         if (isLargeFile) {
             // 大文件：分块加密
-            updateProgress(10, `正在加密文件（共 ${formatFileSize(selectedFile.size)}）...`);
+            updateProgress(10, '正在加密文件（分块模式）...');
 
             const { encryptedChunks, iv } = await encryptFileInChunks(
                 selectedFile,
@@ -202,42 +201,64 @@ async function startUpload() {
                 }
             );
 
-            // 合并所有加密分块
-            const totalLength = iv.length + encryptedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-            combinedData = new Uint8Array(totalLength);
-            combinedData.set(iv, 0);
+            // 创建元数据（4字节标识 + 4字节分块数量）
+            metadata = new Uint8Array(8);
+            const dataView = new DataView(metadata.buffer);
+            dataView.setUint32(0, 0x43484E4B, false); // "CHNK" 标识
+            dataView.setUint32(4, encryptedChunks.length, false); // 分块数量
 
-            let offset = iv.length;
+            // 合并：元数据 + IV + 所有加密分块
+            const totalLength = metadata.length + iv.length +
+                encryptedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+
+            combinedData = new Uint8Array(totalLength);
+            let offset = 0;
+
+            combinedData.set(metadata, offset);
+            offset += metadata.length;
+
+            combinedData.set(iv, offset);
+            offset += iv.length;
+
             for (const chunk of encryptedChunks) {
                 combinedData.set(chunk, offset);
                 offset += chunk.length;
             }
+
+            console.log(`✅ 分块加密完成: ${encryptedChunks.length} 个分块`);
 
         } else {
             // 小文件：整体加密
             updateProgress(10, '正在读取文件...');
             const fileData = await readFileAsArrayBuffer(selectedFile);
 
-            updateProgress(30, '正在加密文件...');
+            updateProgress(30, '正在加密文件（整体模式）...');
             const { encrypted, iv } = await encryptFileWithAES(fileData, aesKey);
 
-            // 合并 IV 和密文
-            combinedData = new Uint8Array(iv.length + encrypted.byteLength);
-            combinedData.set(iv, 0);
-            combinedData.set(new Uint8Array(encrypted), iv.length);
+            // 创建元数据（标识为非分块）
+            metadata = new Uint8Array(8);
+            const dataView = new DataView(metadata.buffer);
+            dataView.setUint32(0, 0x57484F4C, false); // "WHOL" 标识
+            dataView.setUint32(4, 0, false); // 非分块
+
+            // 合并：元数据 + IV + 密文
+            combinedData = new Uint8Array(metadata.length + iv.length + encrypted.byteLength);
+            combinedData.set(metadata, 0);
+            combinedData.set(iv, metadata.length);
+            combinedData.set(new Uint8Array(encrypted), metadata.length + iv.length);
+
+            console.log('✅ 整体加密完成');
         }
 
-        // 4. 用 RSA 公钥加密 AES 密钥
+        // 用 RSA 公钥加密 AES 密钥
         updateProgress(55, '正在加密传输密钥...');
         const encryptedAESKey = await encryptAESKeyWithRSA(aesKey, publicKey);
 
-        // 5. 分片上传到服务器（支持断点续传）
+        // 分片上传
         updateProgress(60, '正在准备上传...');
-
-        const UPLOAD_CHUNK_SIZE = 5 * 1024 * 1024; // 5MB per upload chunk
+        const UPLOAD_CHUNK_SIZE = 5 * 1024 * 1024;
         const totalUploadChunks = Math.ceil(combinedData.length / UPLOAD_CHUNK_SIZE);
-
-        const uploadId = Date.now().toString(); // 上传会话 ID
+        const uploadId = Date.now().toString();
 
         for (let i = 0; i < totalUploadChunks; i++) {
             const start = i * UPLOAD_CHUNK_SIZE;
@@ -252,7 +273,6 @@ async function startUpload() {
             formData.append('encrypted_aes_key', arrayBufferToBase64(encryptedAESKey));
             formData.append('original_filename', selectedFile.name);
 
-            // 上传分片（支持重试）
             let retries = 3;
             while (retries > 0) {
                 try {
@@ -261,25 +281,19 @@ async function startUpload() {
                         body: formData
                     });
 
-                    if (!response.ok) {
-                        throw new Error(`上传分片失败: ${response.status}`);
-                    }
-
-                    break; // 成功，跳出重试循环
+                    if (!response.ok) throw new Error(`上传失败: ${response.status}`);
+                    break;
                 } catch (error) {
                     retries--;
                     if (retries === 0) throw error;
-                    console.warn(`分片 ${i} 上传失败，重试中... (剩余 ${retries} 次)`);
-                    await new Promise(resolve => setTimeout(resolve, 1000)); // 等待1秒后重试
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             }
 
-            // 更新上传进度
             const uploadPercent = Math.round((i + 1) / totalUploadChunks * 100);
-            updateProgress(60 + uploadPercent * 0.35, `正在上传文件... ${uploadPercent}%`);
+            updateProgress(60 + uploadPercent * 0.35, `正在上传... ${uploadPercent}%`);
         }
 
-        // 6. 完成上传
         updateProgress(95, '正在完成上传...');
         const finalResponse = await fetch(`/api/finalize-upload/${urlToken}`, {
             method: 'POST',
@@ -290,13 +304,10 @@ async function startUpload() {
             })
         });
 
-        if (!finalResponse.ok) {
-            throw new Error('完成上传失败');
-        }
+        if (!finalResponse.ok) throw new Error('完成上传失败');
 
         updateProgress(100, '上传完成！');
-        
-        // 显示成功界面
+
         setTimeout(() => {
             document.getElementById('step-uploading').style.display = 'none';
             document.getElementById('step-success').style.display = 'block';
@@ -311,8 +322,14 @@ async function startUpload() {
 }
 
 function updateProgress(percent, text) {
-    document.getElementById('progressFill').style.width = percent + '%';
-    document.getElementById('progressText').textContent = percent + '%';
+    // 将传入的百分比数字格式化为最多两位小数的字符串
+    const formattedPercentString = percent.toFixed(2);
+
+    // 使用 parseFloat 将其转回数字，这样可以去掉末尾多余的 .00 (例如 100.00 会变成 100)
+    const formattedPercentNumber = parseFloat(formattedPercentString);
+
+    document.getElementById('progressFill').style.width = formattedPercentNumber + '%';
+    document.getElementById('progressText').textContent = formattedPercentNumber + '%';
     document.getElementById('uploadStatusText').textContent = text;
 }
 

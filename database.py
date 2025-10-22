@@ -30,7 +30,7 @@ async def init_database():
             )
         """)
 
-        # 日志表（新增）
+        # 日志表
         await db.execute("""
             CREATE TABLE IF NOT EXISTS transfer_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -119,6 +119,34 @@ async def update_transfer_file(
         return cursor.rowcount > 0
 
 
+# 更新上传进度
+async def update_upload_progress(url_token: str, chunks_uploaded: int, chunks_total: int) -> bool:
+    """更新分片上传进度"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute("""
+            UPDATE transfers
+            SET chunks_uploaded = ?,
+                chunks_total = ?,
+                upload_started_at = COALESCE(upload_started_at, CURRENT_TIMESTAMP)
+            WHERE url_token = ?
+        """, (chunks_uploaded, chunks_total, url_token))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+# 标记上传完成
+async def mark_upload_completed(url_token: str) -> bool:
+    """标记上传完成"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute("""
+            UPDATE transfers
+            SET upload_completed_at = CURRENT_TIMESTAMP
+            WHERE url_token = ?
+        """, (url_token,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 # 标记文件已下载
 async def mark_as_downloaded(url_token: str) -> bool:
     """
@@ -165,3 +193,88 @@ async def get_expired_transfers() -> list:
         """) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+# ==================== 日志功能 ====================
+
+async def log_action(url_token: str, action: str, details: str = None,
+                     ip_address: str = None, user_agent: str = None) -> bool:
+    """
+    记录操作日志
+    :param url_token: 传输 Token
+    :param action: 操作类型 (created, uploaded, downloaded, etc.)
+    :param details: 详细信息
+    :param ip_address: IP 地址
+    :param user_agent: 用户代理
+    :return: 是否成功
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("""
+            INSERT INTO transfer_logs (url_token, action, details, ip_address, user_agent)
+            VALUES (?, ?, ?, ?, ?)
+        """, (url_token, action, details, ip_address, user_agent))
+        await db.commit()
+        return True
+
+
+async def get_transfer_logs(url_token: str) -> list:
+    """获取特定传输的所有日志"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM transfer_logs
+            WHERE url_token = ?
+            ORDER BY created_at DESC
+        """, (url_token,)) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+# ==================== 统计功能 ====================
+
+async def get_statistics() -> Dict:
+    """获取系统统计信息"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        # 总传输数
+        async with db.execute("SELECT COUNT(*) FROM transfers") as cursor:
+            total_transfers = (await cursor.fetchone())[0]
+
+        # 已完成传输数
+        async with db.execute("SELECT COUNT(*) FROM transfers WHERE downloaded = 1") as cursor:
+            completed_transfers = (await cursor.fetchone())[0]
+
+        # 待下载传输数
+        async with db.execute("""
+            SELECT COUNT(*) FROM transfers 
+            WHERE encrypted_file_path IS NOT NULL 
+            AND downloaded = 0 
+            AND expires_at > CURRENT_TIMESTAMP
+        """) as cursor:
+            pending_transfers = (await cursor.fetchone())[0]
+
+        # 总文件大小
+        async with db.execute("SELECT COALESCE(SUM(file_size), 0) FROM transfers") as cursor:
+            total_size = (await cursor.fetchone())[0]
+
+        # 今日创建数
+        async with db.execute("""
+            SELECT COUNT(*) FROM transfers 
+            WHERE DATE(created_at) = DATE('now')
+        """) as cursor:
+            today_created = (await cursor.fetchone())[0]
+
+        # 今日下载数
+        async with db.execute("""
+            SELECT COUNT(*) FROM transfers 
+            WHERE DATE(download_at) = DATE('now')
+        """) as cursor:
+            today_downloaded = (await cursor.fetchone())[0]
+
+        return {
+            "total_transfers": total_transfers,
+            "completed_transfers": completed_transfers,
+            "pending_transfers": pending_transfers,
+            "total_size": total_size,
+            "today_created": today_created,
+            "today_downloaded": today_downloaded
+        }
