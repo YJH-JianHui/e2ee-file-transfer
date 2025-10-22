@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+
+{% block title %}生成接收链接 - E2EE 文件传输{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>📥 生成文件接收链接</h2>
+    <p>点击下方按钮，系统将为你生成一个唯一的文件接收链接。</p>
+    
+    <div class="info-box">
+        <h3>🔐 工作原理</h3>
+        <ol>
+            <li>浏览器将在本地生成 <strong>RSA-4096 非对称密钥对</strong></li>
+            <li><strong>公钥</strong>上传到服务器，用于加密</li>
+            <li><strong>私钥</strong>自动下载到你的设备（绝不上传）</li>
+            <li>将生成的链接分享给发送者</li>
+            <li>收到文件后，使用私钥解密</li>
+        </ol>
+    </div>
+
+    <div id="status-message"></div>
+
+    <div id="step-1">
+        <button class="btn" id="generateBtn" onclick="generateReceiveLink()">
+            🔑 生成接收链接
+        </button>
+    </div>
+
+    <div id="step-2" style="display: none;">
+        <div class="spinner"></div>
+        <p class="text-center">正在生成密钥对，请稍候...</p>
+        <p class="text-center text-muted">（大约需要 3-5 秒）</p>
+    </div>
+
+    <div id="step-3" style="display: none;">
+        <div class="message success">
+            ✅ 密钥对生成成功！私钥已自动下载到本地。
+        </div>
+
+        <div class="link-box">
+            <label><strong>📎 你的接收链接：</strong></label>
+            <input type="text" id="receiveLink" readonly>
+            <button class="btn" onclick="copyLink()">📋 复制链接</button>
+        </div>
+
+        <div class="message info">
+            <strong>⚠️ 重要提示：</strong>
+            <ul>
+                <li>请妥善保管下载的 <code>private_key.pem</code> 文件</li>
+                <li>私钥丢失后将<strong>无法解密</strong>收到的文件</li>
+                <li>将接收链接分享给发送者（微信/邮件/QQ等）</li>
+                <li>链接有效期 <strong>24 小时</strong></li>
+            </ul>
+        </div>
+
+        <button class="btn btn-secondary" onclick="location.reload()">
+            🔄 生成新链接
+        </button>
+    </div>
+</div>
+
+<div class="card">
+    <h2>❓ 常见问题</h2>
+    <details>
+        <summary><strong>什么是端到端加密？</strong></summary>
+        <p>所有文件在发送者浏览器中加密，只有你的私钥能解密。服务器只存储密文，无法查看文件内容。</p>
+    </details>
+    <details>
+        <summary><strong>私钥文件安全吗？</strong></summary>
+        <p>私钥仅保存在你的设备上，永远不会上传到服务器。请像保管密码一样保管私钥文件。</p>
+    </details>
+    <details>
+        <summary><strong>文件会保存多久？</strong></summary>
+        <p>文件在服务器保存 24 小时，或下载后立即删除。</p>
+    </details>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/crypto.js"></script>
+<script>
+let currentUrlToken = null;
+
+async function generateReceiveLink() {
+    const generateBtn = document.getElementById('generateBtn');
+    const step1 = document.getElementById('step-1');
+    const step2 = document.getElementById('step-2');
+    const step3 = document.getElementById('step-3');
+    const statusMsg = document.getElementById('status-message');
+
+    // 显示加载状态
+    step1.style.display = 'none';
+    step2.style.display = 'block';
+    statusMsg.innerHTML = '';
+
+    try {
+        // 1. 生成 RSA 密钥对
+        const { publicKey, privateKey } = await generateKeyPair();
+        console.log('✅ 密钥对生成成功');
+
+        // 2. 导出公钥为 PEM 格式
+        const publicKeyPem = await exportPublicKey(publicKey);
+
+        // 3. 上传公钥到服务器
+        const response = await fetch('/api/create-transfer', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                public_key: publicKeyPem
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error('服务器错误');
+        }
+
+        const data = await response.json();
+        currentUrlToken = data.url_token;
+
+        // 4. 下载私钥到本地
+        const privateKeyPem = await exportPrivateKey(privateKey);
+        downloadPrivateKey(privateKeyPem, `private_key_${currentUrlToken}.pem`);
+
+        // 5. 显示接收链接
+        const receiveLink = `{{ base_url }}/receive/${data.url_token}`;
+        document.getElementById('receiveLink').value = receiveLink;
+
+        step2.style.display = 'none';
+        step3.style.display = 'block';
+
+    } catch (error) {
+        console.error('错误:', error);
+        statusMsg.innerHTML = `
+            <div class="message error">
+                ❌ 生成失败：${error.message}
+            </div>
+        `;
+        step2.style.display = 'none';
+        step1.style.display = 'block';
+    }
+}
+
+function copyLink() {
+    const linkInput = document.getElementById('receiveLink');
+    linkInput.select();
+    document.execCommand('copy');
+    
+    alert('✅ 链接已复制到剪贴板！');
+}
+</script>
+
+<style>
+.info-box {
+    background: #f0f4ff;
+    border-left: 4px solid #667eea;
+    padding: 20px;
+    margin: 20px 0;
+    border-radius: 8px;
+}
+
+.info-box h3 {
+    color: #667eea;
+    margin-bottom: 15px;
+}
+
+.info-box ol {
+    margin-left: 20px;
+    line-height: 1.8;
+}
+
+.info-box strong {
+    color: #764ba2;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.text-muted {
+    color: #999;
+    font-size: 0.9rem;
+}
+
+details {
+    margin-bottom: 15px;
+    cursor: pointer;
+}
+
+details summary {
+    padding: 12px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    user-select: none;
+}
+
+details summary:hover {
+    background: #e9ecef;
+}
+
+details p {
+    padding: 15px;
+    margin: 0;
+    background: #f8f9fa;
+    border-radius: 0 0 6px 6px;
+}
+
+code {
+    background: #e9ecef;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+}
+</style>
+{% endblock %}

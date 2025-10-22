@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}E2EE 文件传输{% endblock %}</title>
+    <link rel="stylesheet" href="/css/style.css">
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>🔐 端到端加密文件传输</h1>
+            <p class="subtitle">零知识架构 · 绝对安全</p>
+        </div>
+    </header>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>所有文件均经过端到端加密，服务器无法访问明文数据</p>
+            <p>文件将在 24 小时后或下载后自动销毁</p>
+        </div>
+    </footer>
+
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,400 @@
+{% extends "base.html" %}
+
+{% block title %}下载文件 - E2EE 文件传输{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>📥 接收加密文件</h2>
+    <p>有人向你发送了加密文件，请上传你的私钥进行解密。</p>
+
+    <div class="info-box">
+        <h3>🔓 解密流程</h3>
+        <ol>
+            <li>上传你之前下载的 <strong>private_key.pem</strong> 文件</li>
+            <li>系统将下载加密文件和加密的密钥</li>
+            <li>浏览器使用私钥解密 AES 密钥</li>
+            <li>使用 AES 密钥解密文件</li>
+            <li>自动下载解密后的原始文件</li>
+        </ol>
+    </div>
+
+    <div id="file-info" class="file-info-box">
+        <h3>📄 文件信息</h3>
+        <div class="info-item">
+            <span class="label">原始文件名：</span>
+            <span id="originalFilename">加载中...</span>
+        </div>
+        <div class="info-item">
+            <span class="label">文件大小：</span>
+            <span id="fileSize">加载中...</span>
+        </div>
+        <div class="info-item">
+            <span class="label">上传时间：</span>
+            <span id="uploadTime">加载中...</span>
+        </div>
+    </div>
+
+    <div id="status-message"></div>
+
+    <!-- 步骤 1: 上传私钥 -->
+    <div id="step-upload-key">
+        <div class="key-upload-area">
+            <input type="file" id="privateKeyInput" accept=".pem" style="display: none;" onchange="handlePrivateKeySelect(event)">
+            <div class="upload-icon">🔑</div>
+            <p><strong>点击上传私钥文件</strong></p>
+            <p class="text-muted">文件名通常为 private_key_xxxxx.pem</p>
+            <button class="btn" onclick="document.getElementById('privateKeyInput').click()">
+                📂 选择私钥文件
+            </button>
+        </div>
+
+        <div class="message info">
+            <strong>⚠️ 安全提示：</strong>
+            <ul>
+                <li>私钥文件<strong>不会上传</strong>到服务器</li>
+                <li>所有解密操作在<strong>你的浏览器</strong>中完成</li>
+                <li>解密后服务器文件将<strong>立即删除</strong></li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 步骤 2: 解密中 -->
+    <div id="step-decrypting" style="display: none;">
+        <div class="decrypt-status">
+            <div class="status-icon">🔓</div>
+            <h3 id="decryptStatusText">正在下载加密文件...</h3>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <p id="progressText">0%</p>
+        </div>
+    </div>
+
+    <!-- 步骤 3: 解密成功 -->
+    <div id="step-success" style="display: none;">
+        <div class="message success">
+            <h3>✅ 文件解密成功！</h3>
+            <p>文件已自动下载到你的设备。</p>
+            <p>服务器上的加密文件已被删除。</p>
+        </div>
+
+        <div class="success-info">
+            <div class="success-icon">📄</div>
+            <p><strong>文件名：</strong><span id="successFilename"></span></p>
+            <p><strong>大小：</strong><span id="successFileSize"></span></p>
+        </div>
+
+        <button class="btn" onclick="location.href='/'">
+            🏠 返回首页
+        </button>
+    </div>
+</div>
+
+<div class="card">
+    <h2>🔒 隐私保护</h2>
+    <div class="security-features">
+        <div class="feature-item">
+            <div class="feature-icon">🖥️</div>
+            <h4>本地解密</h4>
+            <p>所有解密在浏览器完成，私钥不会离开你的设备</p>
+        </div>
+        <div class="feature-item">
+            <div class="feature-icon">🗑️</div>
+            <h4>自动销毁</h4>
+            <p>解密成功后，服务器文件立即永久删除</p>
+        </div>
+        <div class="feature-item">
+            <div class="feature-icon">🚫</div>
+            <h4>零知识</h4>
+            <p>服务器从未接触过明文数据或私钥</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/crypto.js"></script>
+<script>
+const urlToken = "{{ url_token }}";
+let privateKey = null;
+let fileInfo = null;
+
+// 页面加载时获取文件信息
+window.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const response = await fetch(`/api/get-file-info/${urlToken}`);
+        if (!response.ok) {
+            throw new Error('无法获取文件信息');
+        }
+
+        fileInfo = await response.json();
+
+        // 显示文件信息
+        document.getElementById('originalFilename').textContent = fileInfo.original_filename;
+        document.getElementById('fileSize').textContent = formatFileSize(fileInfo.file_size);
+        document.getElementById('uploadTime').textContent = new Date(fileInfo.created_at).toLocaleString('zh-CN');
+
+        console.log('✅ 文件信息加载成功');
+    } catch (error) {
+        console.error('❌ 文件信息加载失败:', error);
+        showError('无法加载文件信息: ' + error.message);
+    }
+});
+
+async function handlePrivateKeySelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    try {
+        // 读取私钥文件
+        const privateKeyPem = await readFileAsText(file);
+
+        // 验证私钥格式
+        if (!privateKeyPem.includes('-----BEGIN PRIVATE KEY-----')) {
+            throw new Error('无效的私钥文件格式');
+        }
+
+        // 导入私钥
+        privateKey = await importPrivateKey(privateKeyPem);
+        console.log('✅ 私钥导入成功');
+
+        // 开始解密流程
+        await startDecryption();
+
+    } catch (error) {
+        console.error('❌ 私钥处理失败:', error);
+        showError('私钥无效或格式错误，请确认是否为正确的私钥文件');
+        document.getElementById('privateKeyInput').value = '';
+    }
+}
+
+async function startDecryption() {
+    if (!privateKey || !fileInfo) {
+        showError('请先上传私钥并等待文件信息加载');
+        return;
+    }
+
+    // 切换到解密界面
+    document.getElementById('step-upload-key').style.display = 'none';
+    document.getElementById('step-decrypting').style.display = 'block';
+
+    try {
+        // 1. 下载加密文件
+        updateProgress(20, '正在下载加密文件...');
+        const fileResponse = await fetch(`/api/download/${urlToken}`);
+        if (!fileResponse.ok) {
+            throw new Error('下载加密文件失败');
+        }
+        const encryptedData = await fileResponse.arrayBuffer();
+        console.log('✅ 加密文件下载完成');
+
+        // 2. 提取 IV 和密文 (前12字节是IV)
+        updateProgress(30, '正在提取加密参数...');
+        const iv = new Uint8Array(encryptedData.slice(0, 12));
+        const encryptedFile = encryptedData.slice(12);
+
+        // 3. 获取加密的 AES 密钥
+        updateProgress(40, '正在获取加密密钥...');
+        const keyResponse = await fetch(`/api/get-encrypted-key/${urlToken}`);
+        if (!keyResponse.ok) {
+            throw new Error('获取加密密钥失败');
+        }
+        const keyData = await keyResponse.json();
+        const encryptedAESKey = base64ToArrayBuffer(keyData.encrypted_aes_key);
+
+        // 4. 使用私钥解密 AES 密钥
+        updateProgress(60, '正在解密传输密钥...');
+        const aesKey = await decryptAESKeyWithRSA(encryptedAESKey, privateKey);
+        console.log('✅ AES 密钥解密成功');
+
+        // 5. 使用 AES 密钥解密文件
+        updateProgress(80, '正在解密文件内容...');
+        const decryptedFile = await decryptFileWithAES(encryptedFile, aesKey, iv);
+        console.log('✅ 文件解密成功');
+
+        // 6. 下载解密后的文件
+        updateProgress(90, '正在准备下载...');
+        const blob = new Blob([decryptedFile]);
+        downloadFile(blob, fileInfo.original_filename);
+
+        // 7. 通知服务器删除文件
+        updateProgress(100, '正在清理服务器文件...');
+        await fetch(`/api/confirm-download/${urlToken}`, { method: 'POST' });
+
+        // 显示成功界面
+        document.getElementById('successFilename').textContent = fileInfo.original_filename;
+        document.getElementById('successFileSize').textContent = formatFileSize(fileInfo.file_size);
+
+        setTimeout(() => {
+            document.getElementById('step-decrypting').style.display = 'none';
+            document.getElementById('step-success').style.display = 'block';
+        }, 500);
+
+    } catch (error) {
+        console.error('❌ 解密失败:', error);
+        showError('解密失败: ' + error.message + '<br>请确认私钥是否正确');
+        document.getElementById('step-decrypting').style.display = 'none';
+        document.getElementById('step-upload-key').style.display = 'block';
+        document.getElementById('privateKeyInput').value = '';
+    }
+}
+
+function updateProgress(percent, text) {
+    document.getElementById('progressFill').style.width = percent + '%';
+    document.getElementById('progressText').textContent = percent + '%';
+    document.getElementById('decryptStatusText').textContent = text;
+}
+
+function showError(message) {
+    document.getElementById('status-message').innerHTML = `
+        <div class="message error">❌ ${message}</div>
+    `;
+}
+</script>
+
+<style>
+.file-info-box {
+    background: #f0f4ff;
+    border-left: 4px solid #667eea;
+    padding: 20px;
+    margin: 20px 0;
+    border-radius: 8px;
+}
+
+.file-info-box h3 {
+    color: #667eea;
+    margin-bottom: 15px;
+}
+
+.info-item {
+    display: flex;
+    padding: 10px 0;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.info-item:last-child {
+    border-bottom: none;
+}
+
+.info-item .label {
+    font-weight: 600;
+    color: #666;
+    min-width: 120px;
+}
+
+.key-upload-area {
+    border: 3px dashed #667eea;
+    border-radius: 12px;
+    padding: 50px 20px;
+    text-align: center;
+    background: #f8f9ff;
+    margin: 20px 0;
+}
+
+.upload-icon {
+    font-size: 4rem;
+    margin-bottom: 20px;
+}
+
+.decrypt-status {
+    text-align: center;
+    padding: 40px 20px;
+}
+
+.status-icon {
+    font-size: 4rem;
+    margin-bottom: 20px;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+}
+
+.decrypt-status h3 {
+    color: #667eea;
+    margin-bottom: 20px;
+}
+
+#progressText {
+    text-align: center;
+    margin-top: 10px;
+    font-weight: 600;
+    color: #667eea;
+}
+
+.success-info {
+    background: #f8f9fa;
+    border-radius: 12px;
+    padding: 30px;
+    text-align: center;
+    margin: 20px 0;
+}
+
+.success-icon {
+    font-size: 4rem;
+    margin-bottom: 20px;
+}
+
+.success-info p {
+    margin: 10px 0;
+    font-size: 1.1rem;
+}
+
+.success-info strong {
+    color: #667eea;
+}
+
+.security-features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.feature-item {
+    text-align: center;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+
+.feature-icon {
+    font-size: 2.5rem;
+    margin-bottom: 10px;
+}
+
+.feature-item h4 {
+    color: #667eea;
+    margin-bottom: 10px;
+}
+
+.feature-item p {
+    font-size: 0.9rem;
+    color: #666;
+}
+
+.info-box {
+    background: #f0f4ff;
+    border-left: 4px solid #667eea;
+    padding: 20px;
+    margin: 20px 0;
+    border-radius: 8px;
+}
+
+.info-box h3 {
+    color: #667eea;
+    margin-bottom: 15px;
+}
+
+.info-box ol {
+    margin-left: 20px;
+    line-height: 1.8;
+}
+
+.info-box strong {
+    color: #764ba2;
+}
+</style>
+{% endblock %}

@@ -1,0 +1,375 @@
+{% extends "base.html" %}
+
+{% block title %}上传文件 - E2EE 文件传输{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>📤 安全上传文件</h2>
+    <p>你正在向接收者发送加密文件。文件将在浏览器端加密后上传。</p>
+
+    <div class="info-box">
+        <h3>🔐 加密流程</h3>
+        <ol>
+            <li>你选择的文件将使用 <strong>AES-256-GCM</strong> 加密</li>
+            <li>AES 密钥使用接收者的 <strong>RSA-4096 公钥</strong>加密</li>
+            <li>服务器只接收密文，无法查看文件内容</li>
+            <li>只有接收者的私钥能解密文件</li>
+        </ol>
+    </div>
+
+    <div id="status-message"></div>
+
+    <!-- 步骤 1: 选择文件 -->
+    <div id="step-select">
+        <div class="upload-area" id="uploadArea">
+            <input type="file" id="fileInput" style="display: none;" onchange="handleFileSelect(event)">
+            <div class="upload-icon">📁</div>
+            <p><strong>点击选择文件</strong> 或拖拽到此处</p>
+            <p class="text-muted">最大支持 500MB</p>
+        </div>
+        
+        <div id="fileInfo" style="display: none;">
+            <div class="file-preview">
+                <div class="file-icon">📄</div>
+                <div class="file-details">
+                    <div class="file-name" id="fileName"></div>
+                    <div class="file-size" id="fileSize"></div>
+                </div>
+                <button class="btn-small btn-secondary" onclick="resetFileSelect()">✖ 重选</button>
+            </div>
+            <button class="btn" id="uploadBtn" onclick="startUpload()">
+                🔒 加密并上传
+            </button>
+        </div>
+    </div>
+
+    <!-- 步骤 2: 加密和上传中 -->
+    <div id="step-uploading" style="display: none;">
+        <div class="upload-status">
+            <div class="status-icon">⚙️</div>
+            <h3 id="uploadStatusText">正在加密文件...</h3>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <p id="progressText">0%</p>
+        </div>
+    </div>
+
+    <!-- 步骤 3: 上传成功 -->
+    <div id="step-success" style="display: none;">
+        <div class="message success">
+            <h3>✅ 上传成功！</h3>
+            <p>文件已安全加密并上传到服务器。</p>
+            <p>接收者可以使用此链接下载文件：</p>
+            <div class="link-box">
+                <input type="text" id="downloadLink" readonly value="{{ base_url }}/receive/{{ url_token }}">
+                <button class="btn" onclick="copyDownloadLink()">📋 复制链接</button>
+            </div>
+        </div>
+
+        <div class="message info">
+            <strong>⚠️ 提醒接收者：</strong>
+            <ul>
+                <li>需要使用之前下载的 <code>private_key.pem</code> 文件</li>
+                <li>文件将在 <strong>24 小时后</strong>或<strong>下载后</strong>自动删除</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>🛡️ 安全保障</h2>
+    <div class="security-features">
+        <div class="feature-item">
+            <div class="feature-icon">🔐</div>
+            <h4>端到端加密</h4>
+            <p>文件在你的浏览器中加密，服务器无法解密</p>
+        </div>
+        <div class="feature-item">
+            <div class="feature-icon">🔑</div>
+            <h4>非对称加密</h4>
+            <p>使用 RSA-4096 + AES-256 双重加密</p>
+        </div>
+        <div class="feature-item">
+            <div class="feature-icon">⏰</div>
+            <h4>自动销毁</h4>
+            <p>24小时后或下载后立即删除</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/crypto.js"></script>
+<script>
+const urlToken = "{{ url_token }}";
+let selectedFile = null;
+let publicKey = null;
+
+// 页面加载时获取公钥
+window.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const response = await fetch(`/api/get-public-key/${urlToken}`);
+        if (!response.ok) {
+            throw new Error('无法获取公钥');
+        }
+        const data = await response.json();
+        publicKey = await importPublicKey(data.public_key);
+        console.log('✅ 公钥加载成功');
+    } catch (error) {
+        console.error('❌ 公钥加载失败:', error);
+        showError('无法加载加密密钥，请联系接收者重新生成链接');
+    }
+});
+
+// 拖拽上传
+const uploadArea = document.getElementById('uploadArea');
+uploadArea.addEventListener('click', () => {
+    document.getElementById('fileInput').click();
+});
+
+uploadArea.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    uploadArea.classList.add('drag-over');
+});
+
+uploadArea.addEventListener('dragleave', () => {
+    uploadArea.classList.remove('drag-over');
+});
+
+uploadArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadArea.classList.remove('drag-over');
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+        handleFileSelect({ target: { files } });
+    }
+});
+
+function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // 检查文件大小 (500MB)
+    const maxSize = 500 * 1024 * 1024;
+    if (file.size > maxSize) {
+        showError('文件大小超过 500MB 限制');
+        return;
+    }
+
+    selectedFile = file;
+    document.getElementById('fileName').textContent = file.name;
+    document.getElementById('fileSize').textContent = formatFileSize(file.size);
+    document.getElementById('uploadArea').style.display = 'none';
+    document.getElementById('fileInfo').style.display = 'block';
+}
+
+function resetFileSelect() {
+    selectedFile = null;
+    document.getElementById('fileInput').value = '';
+    document.getElementById('uploadArea').style.display = 'block';
+    document.getElementById('fileInfo').style.display = 'none';
+}
+
+async function startUpload() {
+    if (!selectedFile || !publicKey) {
+        showError('请选择文件或等待公钥加载');
+        return;
+    }
+
+    // 切换到上传界面
+    document.getElementById('step-select').style.display = 'none';
+    document.getElementById('step-uploading').style.display = 'block';
+
+    try {
+        // 1. 读取文件
+        updateProgress(10, '正在读取文件...');
+        const fileData = await readFileAsArrayBuffer(selectedFile);
+
+        // 2. 生成 AES 密钥
+        updateProgress(20, '正在生成加密密钥...');
+        const aesKey = await generateAESKey();
+
+        // 3. 用 AES 加密文件
+        updateProgress(40, '正在加密文件...');
+        const { encrypted, iv } = await encryptFileWithAES(fileData, aesKey);
+
+        // 4. 用 RSA 公钥加密 AES 密钥
+        updateProgress(60, '正在加密传输密钥...');
+        const encryptedAESKey = await encryptAESKeyWithRSA(aesKey, publicKey);
+
+        // 5. 准备上传数据
+        updateProgress(70, '正在准备上传...');
+        const formData = new FormData();
+        
+        // 将加密的文件和 IV 合并
+        const combinedData = new Uint8Array(iv.length + encrypted.byteLength);
+        combinedData.set(iv, 0);
+        combinedData.set(new Uint8Array(encrypted), iv.length);
+        
+        formData.append('file', new Blob([combinedData]), selectedFile.name);
+        formData.append('encrypted_aes_key', arrayBufferToBase64(encryptedAESKey));
+        formData.append('original_filename', selectedFile.name);
+
+        // 6. 上传到服务器
+        updateProgress(80, '正在上传文件...');
+        const response = await fetch(`/api/upload/${urlToken}`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            throw new Error('上传失败');
+        }
+
+        updateProgress(100, '上传完成！');
+        
+        // 显示成功界面
+        setTimeout(() => {
+            document.getElementById('step-uploading').style.display = 'none';
+            document.getElementById('step-success').style.display = 'block';
+        }, 500);
+
+    } catch (error) {
+        console.error('❌ 上传失败:', error);
+        showError('上传失败: ' + error.message);
+        document.getElementById('step-uploading').style.display = 'none';
+        document.getElementById('step-select').style.display = 'block';
+    }
+}
+
+function updateProgress(percent, text) {
+    document.getElementById('progressFill').style.width = percent + '%';
+    document.getElementById('progressText').textContent = percent + '%';
+    document.getElementById('uploadStatusText').textContent = text;
+}
+
+function copyDownloadLink() {
+    const linkInput = document.getElementById('downloadLink');
+    linkInput.select();
+    document.execCommand('copy');
+    alert('✅ 链接已复制到剪贴板！');
+}
+
+function showError(message) {
+    document.getElementById('status-message').innerHTML = `
+        <div class="message error">❌ ${message}</div>
+    `;
+}
+</script>
+
+<style>
+.upload-area {
+    border: 3px dashed #667eea;
+    border-radius: 12px;
+    padding: 60px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    background: #f8f9ff;
+}
+
+.upload-area:hover, .upload-area.drag-over {
+    border-color: #764ba2;
+    background: #f0f4ff;
+    transform: scale(1.02);
+}
+
+.upload-icon {
+    font-size: 4rem;
+    margin-bottom: 20px;
+}
+
+.file-preview {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.file-icon {
+    font-size: 3rem;
+}
+
+.file-details {
+    flex: 1;
+    text-align: left;
+}
+
+.file-name {
+    font-weight: 600;
+    margin-bottom: 5px;
+    word-break: break-all;
+}
+
+.file-size {
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.btn-small {
+    padding: 8px 16px;
+    font-size: 0.9rem;
+}
+
+.upload-status {
+    text-align: center;
+    padding: 40px 20px;
+}
+
+.status-icon {
+    font-size: 4rem;
+    margin-bottom: 20px;
+    animation: rotate 2s linear infinite;
+}
+
+@keyframes rotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.upload-status h3 {
+    color: #667eea;
+    margin-bottom: 20px;
+}
+
+#progressText {
+    text-align: center;
+    margin-top: 10px;
+    font-weight: 600;
+    color: #667eea;
+}
+
+.security-features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.feature-item {
+    text-align: center;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+
+.feature-icon {
+    font-size: 2.5rem;
+    margin-bottom: 10px;
+}
+
+.feature-item h4 {
+    color: #667eea;
+    margin-bottom: 10px;
+}
+
+.feature-item p {
+    font-size: 0.9rem;
+    color: #666;
+}
+</style>
+{% endblock %}
