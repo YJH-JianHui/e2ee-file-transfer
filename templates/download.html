@@ -100,23 +100,10 @@
             <p id="progressText">0%</p>
         </div>
     </div>
+</div>
 
-    <!-- 步骤 3: 解密成功 -->
-    <div id="step-success" style="display: none;">
-        <div class="message success">
-            <h3>✅ 文件解密成功！</h3>
-            <p>文件已下载解密完成，请保存到你的设备设备。</p>
-            <p>服务器上的加密文件已被删除。</p>
-        </div>
-
-        <div class="success-info">
-            <div class="success-icon">📄</div>
-            <p><strong>文件名：</strong><span id="successFilename"></span></p>
-            <p><strong>大小：</strong><span id="successFileSize"></span></p>
-        </div>
-    </div>
-
-    <div id="downloadModal" class="modal">
+<!-- 下载成功模态对话框 -->
+<div id="downloadModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
             <h2>✅ 文件解密成功！</h2>
@@ -126,7 +113,10 @@
             <div class="success-box">
                 <div class="success-icon-large">🎉</div>
                 <h3>文件已成功解密</h3>
-                <p class="success-message">文件解密完成，请点击下方按钮保存到本地。</p>
+                <p class="success-message">
+                    请点击下方按钮保存到本地，
+                    <span class="warning-text">只有一次保存机会!!!</span>
+                </p>
             </div>
 
             <div class="file-info-modal">
@@ -137,10 +127,6 @@
                 <div class="info-row">
                     <span class="label">💾 大小：</span>
                     <span class="value" id="modalFileSize">-</span>
-                </div>
-                <div class="info-row">
-                    <span class="label">🔐 加密方式：</span>
-                    <span class="value">AES-256-GCM</span>
                 </div>
             </div>
 
@@ -162,11 +148,6 @@
                 </button>
             </div>
         </div>
-
-        <div class="modal-footer">
-            <a href="/" class="btn btn-link">🏠 返回首页</a>
-        </div>
-    </div>
     </div>
 </div>
 
@@ -198,6 +179,8 @@
 const urlToken = "{{ url_token }}";
 let privateKey = null;
 let fileInfo = null;
+let decryptedFileBlob = null;
+let decryptedFileName = '';
 
 // 页面加载时获取文件信息
 window.addEventListener('DOMContentLoaded', async () => {
@@ -251,11 +234,6 @@ async function handlePrivateKeySelect(event) {
     }
 }
 
-// 全局变量存储解密后的文件
-let decryptedFileBlob = null;
-let decryptedFileName = '';
-
-// 修改 startDecryption 函数中的下载部分
 async function startDecryption() {
     if (!privateKey || !fileInfo) {
         showError('请先上传私钥并等待文件信息加载');
@@ -269,8 +247,6 @@ async function startDecryption() {
 
     try {
         const isLargeFile = fileInfo.file_size > 50 * 1024 * 1024;
-
-        // ... 前面的解密逻辑保持不变 ...
 
         updateProgress(10, '正在下载加密文件...');
         const fileResponse = await fetch(`/api/download/${urlToken}`);
@@ -343,7 +319,7 @@ async function startDecryption() {
 
         console.log('✅ 文件解密成功');
 
-        // 🔥 关键修改：不自动下载，而是存储到全局变量
+        // 存储解密后的文件
         updateProgress(90, '正在准备文件...');
         decryptedFileBlob = new Blob([decryptedFile]);
         decryptedFileName = fileInfo.original_filename;
@@ -357,10 +333,9 @@ async function startDecryption() {
         // 更新时间线为全部完成
         updateTimelineCompleted();
 
-        // 🔥 关键修改：隐藏解密界面，显示模态对话框
+        // 隐藏解密界面，显示模态对话框
         setTimeout(() => {
             document.getElementById('step-decrypting').style.display = 'none';
-            // 不再显示 step-success，而是打开对话框
             openDownloadModal();
         }, 500);
 
@@ -414,24 +389,7 @@ function saveDecryptedFile() {
     console.log('✅ 文件已保存:', decryptedFileName);
 }
 
-// 点击对话框外部不关闭（避免误操作）
-window.onclick = function(event) {
-    // 只处理其他对话框，不处理下载对话框
-    const resultModal = document.getElementById('resultModal');
-    if (event.target === resultModal) {
-        closeModal();
-    }
-}
-
-// ESC 键关闭所有对话框
-document.addEventListener('keydown', function(event) {
-    if (event.key === 'Escape') {
-        closeModal();
-        closeDownloadModal();
-    }
-});
-
-// 辅助函数：下载文件（已存在，确保正确）
+// 辅助函数
 function downloadFile(blob, filename) {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -456,7 +414,6 @@ function showError(message) {
     statusMsg.style.display = 'block';
 }
 
-// 🔥 新增：清除错误提示函数
 function clearError() {
     const statusMsg = document.getElementById('status-message');
     statusMsg.innerHTML = '';
@@ -478,25 +435,16 @@ function updateTimelineCompleted() {
         line.classList.add('completed');
     });
 }
-
-function updateTimelineToCompleted() {
-    const steps = document.querySelectorAll('.timeline-step');
-    const lines = document.querySelectorAll('.timeline-line');
-
-    steps.forEach(step => {
-        step.classList.remove('active');
-        step.classList.add('completed');
-        const marker = step.querySelector('.step-marker');
-        marker.innerHTML = '✓';
-    });
-
-    lines.forEach(line => {
-        line.classList.add('completed');
-    });
-}
 </script>
 
 <style>
+.warning-text {
+    color: #dc3545;
+    font-weight: bold;
+    font-size: 1.1em;
+    text-shadow: 0 1px 2px rgba(220, 53, 69, 0.3);
+}
+
 .file-info-box {
     background: #f0f4ff;
     border-left: 4px solid #667eea;
@@ -568,28 +516,6 @@ function updateTimelineToCompleted() {
     color: #667eea;
 }
 
-.success-info {
-    background: #f8f9fa;
-    border-radius: 12px;
-    padding: 30px;
-    text-align: center;
-    margin: 20px 0;
-}
-
-.success-icon {
-    font-size: 4rem;
-    margin-bottom: 20px;
-}
-
-.success-info p {
-    margin: 10px 0;
-    font-size: 1.1rem;
-}
-
-.success-info strong {
-    color: #667eea;
-}
-
 .security-features {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -639,19 +565,6 @@ function updateTimelineToCompleted() {
 
 .info-box strong {
     color: #764ba2;
-}
-
-.button-group {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    margin-top: 20px;
-}
-
-@media (max-width: 768px) {
-    .button-group {
-        grid-template-columns: 1fr;
-    }
 }
 
 /* 状态时间线样式 */
@@ -756,38 +669,6 @@ function updateTimelineToCompleted() {
     background: linear-gradient(90deg, #28a745, #20c997);
 }
 
-/* 响应式优化 */
-@media (max-width: 768px) {
-    .timeline-horizontal {
-        overflow-x: auto;
-        justify-content: flex-start;
-        padding-bottom: 10px;
-    }
-
-    .timeline-step {
-        flex: 0 0 80px;
-    }
-
-    .step-marker {
-        width: 40px;
-        height: 40px;
-        font-size: 1rem;
-    }
-
-    .step-label {
-        font-size: 0.75rem;
-    }
-
-    .timeline-line {
-        min-width: 30px;
-        top: -15px;
-    }
-
-    .button-group {
-        grid-template-columns: 1fr;
-    }
-}
-
 /* 模态对话框基础样式 */
 .modal {
     display: none;
@@ -881,6 +762,7 @@ function updateTimelineToCompleted() {
     color: #155724;
     font-size: 1.1rem;
     margin: 0;
+    line-height: 1.6;
 }
 
 /* 文件信息 */
@@ -959,7 +841,7 @@ function updateTimelineToCompleted() {
 /* 按钮组 */
 .button-group-modal {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     gap: 15px;
     margin-bottom: 20px;
 }
@@ -1010,56 +892,33 @@ function updateTimelineToCompleted() {
     pointer-events: none;
 }
 
-.btn-link {
-    background: none;
-    color: #667eea;
-    text-decoration: none;
-    padding: 10px 20px;
-}
-
-.btn-link:hover {
-    background: rgba(102, 126, 234, 0.1);
-    transform: none;
-}
-
-/* 下载状态 */
-.download-status {
-    text-align: center;
-    margin-top: 15px;
-    animation: fadeInUp 0.5s ease-out;
-}
-
-.status-message {
-    display: inline-block;
-    padding: 12px 24px;
-    background: linear-gradient(135deg, #d4edda, #c3e6cb);
-    color: #155724;
-    border-radius: 8px;
-    font-weight: 600;
-    border-left: 4px solid #28a745;
-}
-
-@keyframes fadeInUp {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-.modal-footer {
-    padding: 20px 35px;
-    border-top: 1px solid #e0e0e0;
-    text-align: center;
-    background: #f8f9fa;
-    border-radius: 0 0 20px 20px;
-}
-
-/* 响应式 */
+/* 响应式优化 */
 @media (max-width: 768px) {
+    .timeline-horizontal {
+        overflow-x: auto;
+        justify-content: flex-start;
+        padding-bottom: 10px;
+    }
+
+    .timeline-step {
+        flex: 0 0 80px;
+    }
+
+    .step-marker {
+        width: 40px;
+        height: 40px;
+        font-size: 1rem;
+    }
+
+    .step-label {
+        font-size: 0.75rem;
+    }
+
+    .timeline-line {
+        min-width: 30px;
+        top: -15px;
+    }
+
     .modal-content {
         width: 95%;
         max-height: 95vh;
