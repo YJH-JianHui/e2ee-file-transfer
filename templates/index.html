@@ -1,20 +1,21 @@
 {% extends "base.html" %}
 
-{% block title %}生成接收链接 - E2EE 文件传输{% endblock %}
+{% block title %}生成发送/接收链接 - E2EE 文件传输{% endblock %}
 
 {% block content %}
 <div class="card">
-    <h2>📥 生成文件接收链接</h2>
-    <p>点击下方按钮，系统将为你生成一个唯一的文件接收链接。</p>
+    <h2>📥 生成文件发送/接收链接</h2>
+    <p>点击下方按钮，系统将为你生成一个唯一的文件发送/接收链接。</p>
     
     <div class="info-box">
         <h3>🔐 工作原理</h3>
         <ol>
-            <li>浏览器将在本地生成 <strong>RSA-4096 非对称密钥对</strong></li>
-            <li><strong>公钥</strong>上传到服务器，用于加密</li>
-            <li><strong>私钥</strong>保存在你的设备（绝不上传）</li>
-            <li>将生成的链接分享给发送者</li>
-            <li>收到文件后，使用私钥解密</li>
+            <li><strong>接收者</strong>使用浏览器，在本地生成 <strong>RSA 非对称密钥对（公钥、私钥）</strong></li>
+            <li><strong>公钥</strong>上传到服务器，用于<strong>加密 AES 密钥</strong></li>
+            <li><strong>私钥</strong>保存在你的设备<strong>（绝不上传）</strong></li>
+            <li><strong>接收者</strong>将生成的<strong>链接分享</strong>给文件<strong>发送者</strong></li>
+            <li><strong>接收者的浏览器</strong>使用本地保存的私钥<strong>解密 AES 密钥</strong></li>
+            <li><strong>接收者的浏览器</strong>使用 AES 密钥<strong>解密文件</strong>并<strong>保存</strong></li>
         </ol>
     </div>
 
@@ -22,7 +23,7 @@
 
     <div id="step-1">
         <button class="btn" id="generateBtn" onclick="generateReceiveLink()">
-            🔑 生成接收链接
+            🔑 生成链接
         </button>
     </div>
 
@@ -34,7 +35,7 @@
 
     <div id="step-3" style="display: none;">
         <button class="btn btn-secondary" onclick="location.reload()">
-            🔄 生成新链接
+            🔑 生成链接
         </button>
     </div>
 </div>
@@ -43,7 +44,7 @@
 <div id="resultModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>✅ 接收链接生成成功</h2>
+            <h2>✅ 链接生成成功</h2>
         </div>
 
         <div class="modal-body">
@@ -53,22 +54,23 @@
                 <ul>
                     <li>请<strong>立即保存私钥</strong>，私钥丢失后将<strong>无法解密</strong>收到的文件</li>
                     <li>私钥文件名为 <code id="keyFileName">private_key.pem</code></li>
-                    <li>将下方接收链接分享给发送者（微信/邮件/QQ等）</li>
+                    <li>将下方接收链接<strong>分享给发送者</strong>（微信/邮件/QQ等）</li>
+                    <li>发送者上传文件后，<strong>请同样使用下方的链接接收文件</strong></li>
                     <li>链接有效期 <strong>24 小时</strong></li>
                 </ul>
             </div>
 
             <div class="action-section">
-                <h3>📎 你的接收链接</h3>
+                <h3>📎 发送/接收链接</h3>
                 <div class="link-display">
                     <input type="text" id="receiveLink" readonly onclick="this.select()">
                 </div>
                 <div class="button-group">
-                    <button class="btn btn-primary" onclick="copyLinkFromModal()">
-                        📋 复制链接
-                    </button>
                     <button class="btn btn-success" id="downloadKeyBtn" onclick="downloadPrivateKeyNow()">
-                        💾 保存私钥
+                        💾 1、保存私钥
+                    </button>
+                    <button class="btn btn-primary" onclick="copyLinkFromModal()">
+                        📋 2、复制链接
                     </button>
                 </div>
             </div>
@@ -76,11 +78,7 @@
             <div id="modalMessage" class="modal-message"></div>
         </div>
 
-        <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="closeModal()">
-                关闭
-            </button>
-        </div>
+        <!-- 删除 modal-footer 部分 -->
     </div>
 </div>
 
@@ -88,11 +86,11 @@
     <h2>❓ 常见问题</h2>
     <details>
         <summary><strong>什么是端到端加密？</strong></summary>
-        <p>所有文件在发送者浏览器中加密，只有你的私钥能解密。服务器只存储密文，无法查看文件内容。</p>
+        <p>所有加解密过程均在发送者和接收者的浏览器中进行，服务器只存储密文，无法查看文件内容，且网络中的通讯节点无法解析任何加密内容。</p>
     </details>
     <details>
         <summary><strong>私钥文件安全吗？</strong></summary>
-        <p>私钥仅保存在你的设备上，永远不会上传到服务器。请像保管密码一样保管私钥文件。</p>
+        <p>私钥仅保存在你的设备上，永远不会上传到服务器，且每个私钥只生效一次，请像保管密码一样保管私钥文件。</p>
     </details>
     <details>
         <summary><strong>文件会保存多久？</strong></summary>
@@ -106,6 +104,7 @@
 <script>
 let currentUrlToken = null;
 let privateKeyData = null;
+let messageTimer = null;
 
 async function generateReceiveLink() {
     const generateBtn = document.getElementById('generateBtn');
@@ -176,20 +175,15 @@ async function generateReceiveLink() {
 
 function openModal() {
     const modal = document.getElementById('resultModal');
+
+    // 显示对话框
     modal.style.display = 'flex';
-    // 添加动画类
     setTimeout(() => {
         modal.classList.add('show');
     }, 10);
 }
 
-function closeModal() {
-    const modal = document.getElementById('resultModal');
-    modal.classList.remove('show');
-    setTimeout(() => {
-        modal.style.display = 'none';
-    }, 300);
-}
+// 删除 closeModal 函数
 
 function goToStatusPage() {
     if (currentUrlToken) {
@@ -208,7 +202,7 @@ function downloadPrivateKeyNow() {
     btn.classList.add('btn-disabled');
     btn.disabled = true;
 
-    showModalMessage('success', '✅ 私钥已保存到本地！');
+    showModalMessage('success', '✅ 请妥善保存私钥到本地！');
 }
 
 function copyLinkFromModal() {
@@ -216,13 +210,19 @@ function copyLinkFromModal() {
     linkInput.select();
     linkInput.setSelectionRange(0, 99999); // For mobile
 
+    // 清除可能存在的旧定时器
+    if (messageTimer) {
+        clearTimeout(messageTimer);
+        messageTimer = null;
+    }
+
     try {
         document.execCommand('copy');
-        showModalMessage('success', '✅ 链接已复制到剪贴板！');
+        showModalMessage('success', '✅ 链接已复制到剪贴板，请记录该链接并分享给文件发送者！');
     } catch (err) {
         // 降级方案
         navigator.clipboard.writeText(linkInput.value).then(() => {
-            showModalMessage('success', '✅ 链接已复制到剪贴板！');
+            showModalMessage('success', '✅ 链接已复制到剪贴板，请记录该链接并分享给文件发送者！');
         }).catch(() => {
             showModalMessage('error', '❌ 复制失败，请手动复制');
         });
@@ -235,26 +235,17 @@ function showModalMessage(type, message) {
     msgDiv.innerHTML = message;
     msgDiv.style.display = 'block';
 
-    // 3秒后自动隐藏
-    setTimeout(() => {
+    // 清除之前的定时器
+    if (messageTimer) {
+        clearTimeout(messageTimer);
+    }
+
+    // 5秒后自动隐藏
+    messageTimer = setTimeout(() => {
         msgDiv.style.display = 'none';
-    }, 3000);
+        messageTimer = null;
+    }, 5000);
 }
-
-// 点击对话框外部关闭
-window.onclick = function(event) {
-    const modal = document.getElementById('resultModal');
-    if (event.target === modal) {
-        closeModal();
-    }
-}
-
-// ESC 键关闭
-document.addEventListener('keydown', function(event) {
-    if (event.key === 'Escape') {
-        closeModal();
-    }
-});
 </script>
 
 <style>
@@ -464,11 +455,7 @@ code {
     animation: slideInRight 0.3s ease-out;
 }
 
-.modal-footer {
-    padding: 20px 30px;
-    border-top: 1px solid #e0e0e0;
-    text-align: right;
-}
+/* 删除 modal-footer 相关样式 */
 
 /* 响应式 */
 @media (max-width: 768px) {

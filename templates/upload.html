@@ -36,15 +36,15 @@
 
 <div class="card">
     <h2>📤 安全上传文件</h2>
-    <p>你正在向接收者发送加密文件。文件将在浏览器端加密后上传。</p>
+    <p>你正在向接收者发送加密文件，文件将在浏览器端加密后上传。</p>
 
     <div class="info-box">
         <h3>🔐 加密流程</h3>
         <ol>
-            <li>你选择的文件将使用 <strong>AES-256-GCM</strong> 加密</li>
-            <li>AES 密钥使用接收者的 <strong>RSA-4096 公钥</strong>加密</li>
-            <li>服务器只接收密文，无法查看文件内容</li>
-            <li>只有接收者的私钥能解密文件</li>
+            <li>你选择的文件将使用 <strong>AES</strong> 加密</li>
+            <li>AES 密钥使用接收者的 <strong>RSA 公钥</strong>加密</li>
+            <li>服务器只接收<strong>密文</strong>和<strong>加密的ASE密钥</strong>，无法查看文件内容</li>
+            <li>只有<strong>接收者的私钥</strong>能解密文件</li>
         </ol>
     </div>
 
@@ -85,21 +85,54 @@
             <p id="progressText">0%</p>
         </div>
     </div>
+</div>
 
-    <!-- 步骤 3: 上传成功 -->
-    <div id="step-success" style="display: none;">
-        <div class="message success">
-            <h3>✅ 上传成功！</h3>
-            <p>文件已安全加密并上传到服务器。</p>
-            <p>接收者可以访问相同的链接下载文件。</p>
+<!-- 上传成功模态对话框 -->
+<div id="successModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>✅ 上传成功！</h2>
         </div>
 
-        <div class="message info">
-            <strong>⚠️ 提醒接收者：</strong>
-            <ul>
-                <li>需要使用之前下载的 <code>private_key.pem</code> 文件</li>
-                <li>文件将在 <strong>24 小时后</strong>或<strong>下载后</strong>自动删除</li>
-            </ul>
+        <div class="modal-body">
+            <div class="success-box">
+                <div class="success-icon-large">🎉</div>
+                <h3>文件已安全加密并上传</h3>
+                <p class="success-message">文件已成功加密并上传到服务器，接收者可以使用相同的链接下载文件。</p>
+            </div>
+
+            <div class="file-info-modal">
+                <div class="info-row">
+                    <span class="label">📄 文件名：</span>
+                    <span class="value" id="successFilename">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="label">💾 大小：</span>
+                    <span class="value" id="successFileSize">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="label">🔐 加密方式：</span>
+                    <span class="value">AES + RSA</span>
+                </div>
+            </div>
+
+            <div class="warning-notice">
+                <div class="notice-icon">⚠️</div>
+                <div class="notice-content">
+                    <strong>提醒接收者</strong>
+                    <ul>
+                        <li>使用之前下载的 <code>private_key_xxxx.pem</code> 文件解密</li>
+                        <li>文件将在 24 小时后或下载后自动删除</li>
+                        <li>文件仅支持一次下载，请妥善保存解密文件</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="button-group-modal">
+                <button class="btn btn-success btn-large" onclick="location.reload()">
+                    📥 查看下载页面
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -115,7 +148,7 @@
         <div class="feature-item">
             <div class="feature-icon">🔑</div>
             <h4>非对称加密</h4>
-            <p>使用 RSA-4096 + AES-256 双重加密</p>
+            <p>使用 RSA-4096 + AES 双重加密</p>
         </div>
         <div class="feature-item">
             <div class="feature-icon">⏰</div>
@@ -318,13 +351,13 @@ async function startUpload() {
 
         updateProgress(100, '上传完成！');
 
-        // 🔥 关键修复：更新时间线状态
+        // 更新时间线状态
         updateTimelineToUploaded();
 
-        // 显示成功界面
+        // 显示成功模态对话框
         setTimeout(() => {
             document.getElementById('step-uploading').style.display = 'none';
-            document.getElementById('step-success').style.display = 'block';
+            openSuccessModal();
         }, 500);
 
     } catch (error) {
@@ -335,7 +368,22 @@ async function startUpload() {
     }
 }
 
-// 🔥 新增：更新时间线到"已上传"状态
+// 打开成功模态对话框
+function openSuccessModal() {
+    const modal = document.getElementById('successModal');
+
+    // 设置文件信息
+    document.getElementById('successFilename').textContent = selectedFile.name;
+    document.getElementById('successFileSize').textContent = formatFileSize(selectedFile.size);
+
+    // 显示对话框
+    modal.style.display = 'flex';
+    setTimeout(() => {
+        modal.classList.add('show');
+    }, 10);
+}
+
+// 更新时间线到"已上传"状态
 function updateTimelineToUploaded() {
     const steps = document.querySelectorAll('.timeline-step');
     const lines = document.querySelectorAll('.timeline-line');
@@ -506,12 +554,6 @@ function showError(message) {
     margin-top: 20px;
 }
 
-@media (max-width: 768px) {
-    .button-group {
-        grid-template-columns: 1fr;
-    }
-}
-
 /* 状态时间线样式 */
 .status-timeline-card {
     background: linear-gradient(135deg, #f0f4ff 0%, #e8f0ff 100%);
@@ -614,6 +656,230 @@ function showError(message) {
     background: linear-gradient(90deg, #28a745, #20c997);
 }
 
+/* 模态对话框基础样式 */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(8px);
+    justify-content: center;
+    align-items: center;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.modal.show {
+    opacity: 1;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 20px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5);
+    animation: modalSlideUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes modalSlideUp {
+    from {
+        transform: translateY(60px) scale(0.95);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+}
+
+.modal-header {
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    color: white;
+    padding: 30px;
+    border-radius: 20px 20px 0 0;
+    text-align: center;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.8rem;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+.modal-body {
+    padding: 35px;
+}
+
+/* 成功提示框 */
+.success-box {
+    text-align: center;
+    margin-bottom: 30px;
+    padding: 25px;
+    background: linear-gradient(135deg, #d4edda, #c3e6cb);
+    border-radius: 16px;
+    border-left: 5px solid #28a745;
+}
+
+.success-icon-large {
+    font-size: 4rem;
+    margin-bottom: 15px;
+    animation: bounceIn 0.8s ease-out;
+}
+
+@keyframes bounceIn {
+    0% { transform: scale(0); }
+    50% { transform: scale(1.2); }
+    100% { transform: scale(1); }
+}
+
+.success-box h3 {
+    color: #155724;
+    margin-bottom: 10px;
+    font-size: 1.5rem;
+}
+
+.success-message {
+    color: #155724;
+    font-size: 1.1rem;
+    margin: 0;
+    line-height: 1.6;
+}
+
+/* 文件信息 */
+.file-info-modal {
+    background: #f8f9fa;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 25px;
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.info-row:last-child {
+    border-bottom: none;
+}
+
+.info-row .label {
+    font-weight: 600;
+    color: #666;
+    font-size: 1rem;
+}
+
+.info-row .value {
+    color: #333;
+    font-weight: 500;
+    font-size: 1rem;
+    word-break: break-all;
+    text-align: right;
+    max-width: 60%;
+}
+
+/* 警告提示 */
+.warning-notice {
+    display: flex;
+    gap: 15px;
+    background: linear-gradient(135deg, #fff3cd, #ffe9a6);
+    border-left: 4px solid #ffc107;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 25px;
+}
+
+.notice-icon {
+    font-size: 2.5rem;
+    flex-shrink: 0;
+}
+
+.notice-content {
+    flex: 1;
+}
+
+.notice-content strong {
+    color: #856404;
+    font-size: 1.1rem;
+    display: block;
+    margin-bottom: 10px;
+}
+
+.notice-content ul {
+    margin: 0;
+    padding-left: 20px;
+    color: #856404;
+    line-height: 1.8;
+}
+
+.notice-content li {
+    margin-bottom: 5px;
+}
+
+.notice-content code {
+    background: rgba(0, 0, 0, 0.1);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+}
+
+/* 按钮组 */
+.button-group-modal {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.btn-large {
+    padding: 16px 24px;
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.btn-success {
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    box-shadow: 0 4px 15px rgba(40, 167, 69, 0.4);
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-success::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.3);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s, height 0.6s;
+}
+
+.btn-success:hover::before {
+    width: 300px;
+    height: 300px;
+}
+
+.btn-success:hover {
+    box-shadow: 0 8px 25px rgba(40, 167, 69, 0.5);
+    transform: translateY(-2px);
+}
+
+.btn-success:active {
+    transform: translateY(0);
+}
+
 /* 响应式优化 */
 @media (max-width: 768px) {
     .timeline-horizontal {
@@ -640,6 +906,54 @@ function showError(message) {
         min-width: 30px;
         top: -15px;
     }
+
+    .modal-content {
+        width: 95%;
+        max-height: 95vh;
+    }
+
+    .modal-body {
+        padding: 25px;
+    }
+
+    .button-group-modal {
+        grid-template-columns: 1fr;
+    }
+
+    .info-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+    }
+
+    .info-row .value {
+        text-align: left;
+        max-width: 100%;
+    }
+
+    .warning-notice {
+        flex-direction: column;
+        text-align: center;
+    }
+}
+
+/* 滚动条美化 */
+.modal-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.modal-content::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 0 20px 20px 0;
+}
+
+.modal-content::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    border-radius: 4px;
+}
+
+.modal-content::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, #764ba2, #667eea);
 }
 </style>
 {% endblock %}
