@@ -186,7 +186,10 @@ window.addEventListener('DOMContentLoaded', async () => {
         // 显示文件信息
         document.getElementById('originalFilename').textContent = fileInfo.original_filename;
         document.getElementById('fileSize').textContent = formatFileSize(fileInfo.file_size);
-        document.getElementById('uploadTime').textContent = new Date(fileInfo.created_at).toLocaleString('zh-CN');
+        document.getElementById('uploadTime').textContent =
+            new Date(fileInfo.created_at).toLocaleString('zh-CN', {
+                timeZone: 'Asia/Shanghai'
+            });
 
         console.log('✅ 文件信息加载成功');
     } catch (error) {

@@ -3,12 +3,15 @@ import os
 from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import get_expired_transfers, delete_transfer
-from config import UPLOAD_DIR
+from datetime import datetime, timezone, timedelta
+
+CST = timezone(timedelta(hours=8))
 
 
 async def cleanup_expired_files():
     """清理过期或已下载的文件"""
-    print("🧹 开始清理过期文件...")
+    current_time = datetime.now(CST).strftime('%Y-%m-%d %H:%M:%S')
+    print(f"🧹 开始清理过期文件... (东八区时间: {current_time})")
 
     expired_transfers = await get_expired_transfers()
     cleaned_count = 0

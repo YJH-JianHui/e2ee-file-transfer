@@ -3,7 +3,10 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 from config import DATABASE_PATH, FILE_EXPIRATION_HOURS, URL_TOKEN_LENGTH
+from datetime import datetime, timedelta, timezone
 
+# 定义东八区时区
+CST = timezone(timedelta(hours=8))
 
 # 数据库初始化
 async def init_database():
@@ -61,13 +64,15 @@ async def create_transfer(public_key: str) -> Dict:
     :return: 包含 url_token 的字典
     """
     url_token = generate_url_token()
-    expires_at = datetime.now() + timedelta(hours=FILE_EXPIRATION_HOURS)
+    # 使用东八区时间
+    now = datetime.now(CST)
+    expires_at = now + timedelta(hours=FILE_EXPIRATION_HOURS)
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("""
-            INSERT INTO transfers (url_token, public_key, expires_at)
-            VALUES (?, ?, ?)
-        """, (url_token, public_key, expires_at))
+            INSERT INTO transfers (url_token, public_key, expires_at, created_at)
+            VALUES (?, ?, ?, ?)
+        """, (url_token, public_key, expires_at.isoformat(), now.isoformat()))
         await db.commit()
 
     return {
@@ -184,16 +189,18 @@ async def get_expired_transfers() -> list:
     获取所有过期的传输记录
     :return: 过期记录列表
     """
+    # 获取东八区当前时间的 ISO 格式字符串
+    current_time_cst = datetime.now(CST).isoformat()
+
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT * FROM transfers
-            WHERE expires_at < CURRENT_TIMESTAMP
+            WHERE expires_at < ?
             OR downloaded = 1
-        """) as cursor:
+        """, (current_time_cst,)) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
-
 
 # ==================== 日志功能 ====================
 
@@ -208,11 +215,13 @@ async def log_action(url_token: str, action: str, details: str = None,
     :param user_agent: 用户代理
     :return: 是否成功
     """
+    current_time_cst = datetime.now(CST).isoformat()
+
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("""
-            INSERT INTO transfer_logs (url_token, action, details, ip_address, user_agent)
-            VALUES (?, ?, ?, ?, ?)
-        """, (url_token, action, details, ip_address, user_agent))
+            INSERT INTO transfer_logs (url_token, action, details, ip_address, user_agent, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (url_token, action, details, ip_address, user_agent, current_time_cst))
         await db.commit()
         return True
 

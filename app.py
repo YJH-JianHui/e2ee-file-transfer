@@ -10,6 +10,9 @@ import os
 import config
 import database
 from cleanup import start_cleanup_scheduler
+from datetime import datetime, timezone, timedelta
+
+CST = timezone(timedelta(hours=8))
 
 
 # 应用生命周期管理
@@ -60,7 +63,14 @@ async def validate_transfer_access(url_token: str, check_file: bool = False):
 
     # 2. 检查是否已过期
     expires_at = datetime.fromisoformat(transfer['expires_at'])
-    if datetime.now() > expires_at:
+
+    # 确保 expires_at 是时区感知的
+    if expires_at.tzinfo is None:
+        # 如果数据库存储的是 naive datetime，假定为东八区时间
+        expires_at = expires_at.replace(tzinfo=CST)
+
+    # 使用时区感知的当前时间进行比较
+    if datetime.now(CST) > expires_at:
         raise HTTPException(status_code=404)
 
     # 3. 检查是否已下载（已完成传输）
