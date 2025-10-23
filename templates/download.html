@@ -329,8 +329,11 @@ async function startDecryption() {
 }
 
 function updateProgress(percent, text) {
-    document.getElementById('progressFill').style.width = percent + '%';
-    document.getElementById('progressText').textContent = percent + '%';
+    // 将传入的百分比格式化为最多两位小数
+    const formattedPercent = parseFloat(percent.toFixed(2));
+
+    document.getElementById('progressFill').style.width = formattedPercent + '%';
+    document.getElementById('progressText').textContent = formattedPercent + '%';
     document.getElementById('decryptStatusText').textContent = text;
 }
 

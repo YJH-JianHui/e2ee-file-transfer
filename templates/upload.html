@@ -342,8 +342,14 @@ async function startUpload() {
 }
 
 function updateProgress(percent, text) {
-    document.getElementById('progressFill').style.width = percent + '%';
-    document.getElementById('progressText').textContent = percent + '%';
+    // 将传入的百分比数字格式化为最多两位小数的字符串
+    const formattedPercentString = percent.toFixed(2);
+
+    // 使用 parseFloat 将其转回数字，这样可以去掉末尾多余的 .00 (例如 100.00 会变成 100)
+    const formattedPercentNumber = parseFloat(formattedPercentString);
+
+    document.getElementById('progressFill').style.width = formattedPercentNumber + '%';
+    document.getElementById('progressText').textContent = formattedPercentNumber + '%';
     document.getElementById('uploadStatusText').textContent = text;
 }
 
