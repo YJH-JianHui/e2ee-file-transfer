@@ -115,6 +115,59 @@
             <p><strong>大小：</strong><span id="successFileSize"></span></p>
         </div>
     </div>
+
+    <div id="downloadModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>✅ 文件解密成功！</h2>
+        </div>
+
+        <div class="modal-body">
+            <div class="success-box">
+                <div class="success-icon-large">🎉</div>
+                <h3>文件已成功解密</h3>
+                <p class="success-message">文件解密完成，请点击下方按钮保存到本地。</p>
+            </div>
+
+            <div class="file-info-modal">
+                <div class="info-row">
+                    <span class="label">📄 文件名：</span>
+                    <span class="value" id="modalFilename">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="label">💾 大小：</span>
+                    <span class="value" id="modalFileSize">-</span>
+                </div>
+                <div class="info-row">
+                    <span class="label">🔐 加密方式：</span>
+                    <span class="value">AES-256-GCM</span>
+                </div>
+            </div>
+
+            <div class="security-notice">
+                <div class="notice-icon">🛡️</div>
+                <div class="notice-content">
+                    <strong>安全提示</strong>
+                    <ul>
+                        <li>文件已在本地解密完成</li>
+                        <li>服务器上的加密文件已被删除</li>
+                        <li>整个传输过程端到端加密</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="button-group-modal">
+                <button class="btn btn-success btn-large" id="saveFileBtn" onclick="saveDecryptedFile()">
+                    💾 保存文件
+                </button>
+            </div>
+        </div>
+
+        <div class="modal-footer">
+            <a href="/" class="btn btn-link">🏠 返回首页</a>
+        </div>
+    </div>
+    </div>
 </div>
 
 <div class="card">
@@ -198,23 +251,27 @@ async function handlePrivateKeySelect(event) {
     }
 }
 
+// 全局变量存储解密后的文件
+let decryptedFileBlob = null;
+let decryptedFileName = '';
+
+// 修改 startDecryption 函数中的下载部分
 async function startDecryption() {
     if (!privateKey || !fileInfo) {
         showError('请先上传私钥并等待文件信息加载');
         return;
     }
 
-    // 🔥 关键修复：切换界面时清除错误提示
     clearError();
 
-    // 切换到解密界面
     document.getElementById('step-upload-key').style.display = 'none';
     document.getElementById('step-decrypting').style.display = 'block';
 
     try {
         const isLargeFile = fileInfo.file_size > 50 * 1024 * 1024;
 
-        // 1. 下载加密文件
+        // ... 前面的解密逻辑保持不变 ...
+
         updateProgress(10, '正在下载加密文件...');
         const fileResponse = await fetch(`/api/download/${urlToken}`);
         if (!fileResponse.ok) {
@@ -243,12 +300,10 @@ async function startDecryption() {
             position += chunk.length;
         }
 
-        // 2. 提取 IV 和密文
         updateProgress(35, '正在提取加密参数...');
         const iv = encryptedData.slice(0, 12);
         const encryptedFile = encryptedData.slice(12);
 
-        // 3. 获取加密的 AES 密钥
         updateProgress(40, '正在获取加密密钥...');
         const keyResponse = await fetch(`/api/get-encrypted-key/${urlToken}`);
         if (!keyResponse.ok) {
@@ -257,12 +312,10 @@ async function startDecryption() {
         const keyData = await keyResponse.json();
         const encryptedAESKey = base64ToArrayBuffer(keyData.encrypted_aes_key);
 
-        // 4. 使用私钥解密 AES 密钥
         updateProgress(50, '正在解密传输密钥...');
         const aesKey = await decryptAESKeyWithRSA(encryptedAESKey, privateKey);
         console.log('✅ AES 密钥解密成功');
 
-        // 5. 解密文件
         let decryptedFile;
 
         if (isLargeFile) {
@@ -290,27 +343,25 @@ async function startDecryption() {
 
         console.log('✅ 文件解密成功');
 
-        // 6. 下载解密后的文件
-        updateProgress(90, '正在准备下载...');
-        const blob = new Blob([decryptedFile]);
-        downloadFile(blob, fileInfo.original_filename);
+        // 🔥 关键修改：不自动下载，而是存储到全局变量
+        updateProgress(90, '正在准备文件...');
+        decryptedFileBlob = new Blob([decryptedFile]);
+        decryptedFileName = fileInfo.original_filename;
 
-        // 7. 通知服务器删除文件
+        // 通知服务器删除文件
         updateProgress(95, '正在清理服务器文件...');
         await fetch(`/api/confirm-download/${urlToken}`, { method: 'POST' });
 
         updateProgress(100, '完成！');
 
-        // 显示成功界面
-        document.getElementById('successFilename').textContent = fileInfo.original_filename;
-        document.getElementById('successFileSize').textContent = formatFileSize(fileInfo.file_size);
-
         // 更新时间线为全部完成
         updateTimelineCompleted();
 
+        // 🔥 关键修改：隐藏解密界面，显示模态对话框
         setTimeout(() => {
             document.getElementById('step-decrypting').style.display = 'none';
-            document.getElementById('step-success').style.display = 'block';
+            // 不再显示 step-success，而是打开对话框
+            openDownloadModal();
         }, 500);
 
     } catch (error) {
@@ -319,10 +370,77 @@ async function startDecryption() {
         document.getElementById('step-decrypting').style.display = 'none';
         document.getElementById('step-upload-key').style.display = 'block';
         document.getElementById('privateKeyInput').value = '';
-
-        // 🔥 关键修复：重置私钥变量，允许重新上传
         privateKey = null;
     }
+}
+
+// 🔥 新增：打开下载模态对话框
+function openDownloadModal() {
+    const modal = document.getElementById('downloadModal');
+
+    // 设置文件信息
+    document.getElementById('modalFilename').textContent = decryptedFileName;
+    document.getElementById('modalFileSize').textContent = formatFileSize(decryptedFileBlob.size);
+
+    // 重置按钮状态
+    const saveBtn = document.getElementById('saveFileBtn');
+    saveBtn.classList.remove('downloaded');
+    saveBtn.innerHTML = '💾 保存文件';
+    saveBtn.disabled = false;
+
+    // 显示对话框
+    modal.style.display = 'flex';
+    setTimeout(() => {
+        modal.classList.add('show');
+    }, 10);
+}
+
+// 🔥 新增：保存解密后的文件
+function saveDecryptedFile() {
+    if (!decryptedFileBlob || !decryptedFileName) {
+        alert('文件数据不可用，请刷新页面重试');
+        return;
+    }
+
+    // 下载文件
+    downloadFile(decryptedFileBlob, decryptedFileName);
+
+    // 更新按钮状态
+    const saveBtn = document.getElementById('saveFileBtn');
+    saveBtn.classList.add('downloaded');
+    saveBtn.innerHTML = '✅ 已保存';
+    saveBtn.disabled = true;
+
+    console.log('✅ 文件已保存:', decryptedFileName);
+}
+
+// 点击对话框外部不关闭（避免误操作）
+window.onclick = function(event) {
+    // 只处理其他对话框，不处理下载对话框
+    const resultModal = document.getElementById('resultModal');
+    if (event.target === resultModal) {
+        closeModal();
+    }
+}
+
+// ESC 键关闭所有对话框
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        closeModal();
+        closeDownloadModal();
+    }
+});
+
+// 辅助函数：下载文件（已存在，确保正确）
+function downloadFile(blob, filename) {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
 }
 
 function updateProgress(percent, text) {
@@ -668,6 +786,327 @@ function updateTimelineToCompleted() {
     .button-group {
         grid-template-columns: 1fr;
     }
+}
+
+/* 模态对话框基础样式 */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(8px);
+    justify-content: center;
+    align-items: center;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.modal.show {
+    opacity: 1;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 20px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5);
+    animation: modalSlideUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes modalSlideUp {
+    from {
+        transform: translateY(60px) scale(0.95);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+}
+
+.modal-header {
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    color: white;
+    padding: 30px;
+    border-radius: 20px 20px 0 0;
+    text-align: center;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.8rem;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+.modal-body {
+    padding: 35px;
+}
+
+/* 成功提示框 */
+.success-box {
+    text-align: center;
+    margin-bottom: 30px;
+    padding: 25px;
+    background: linear-gradient(135deg, #d4edda, #c3e6cb);
+    border-radius: 16px;
+    border-left: 5px solid #28a745;
+}
+
+.success-icon-large {
+    font-size: 4rem;
+    margin-bottom: 15px;
+    animation: bounceIn 0.8s ease-out;
+}
+
+@keyframes bounceIn {
+    0% { transform: scale(0); }
+    50% { transform: scale(1.2); }
+    100% { transform: scale(1); }
+}
+
+.success-box h3 {
+    color: #155724;
+    margin-bottom: 10px;
+    font-size: 1.5rem;
+}
+
+.success-message {
+    color: #155724;
+    font-size: 1.1rem;
+    margin: 0;
+}
+
+/* 文件信息 */
+.file-info-modal {
+    background: #f8f9fa;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 25px;
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.info-row:last-child {
+    border-bottom: none;
+}
+
+.info-row .label {
+    font-weight: 600;
+    color: #666;
+    font-size: 1rem;
+}
+
+.info-row .value {
+    color: #333;
+    font-weight: 500;
+    font-size: 1rem;
+    word-break: break-all;
+    text-align: right;
+    max-width: 60%;
+}
+
+/* 安全提示 */
+.security-notice {
+    display: flex;
+    gap: 15px;
+    background: linear-gradient(135deg, #e8f4f8, #d1ecf1);
+    border-left: 4px solid #17a2b8;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 25px;
+}
+
+.notice-icon {
+    font-size: 2.5rem;
+    flex-shrink: 0;
+}
+
+.notice-content {
+    flex: 1;
+}
+
+.notice-content strong {
+    color: #0c5460;
+    font-size: 1.1rem;
+    display: block;
+    margin-bottom: 10px;
+}
+
+.notice-content ul {
+    margin: 0;
+    padding-left: 20px;
+    color: #0c5460;
+    line-height: 1.8;
+}
+
+.notice-content li {
+    margin-bottom: 5px;
+}
+
+/* 按钮组 */
+.button-group-modal {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.btn-large {
+    padding: 16px 24px;
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.btn-success {
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    box-shadow: 0 4px 15px rgba(40, 167, 69, 0.4);
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-success::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.3);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s, height 0.6s;
+}
+
+.btn-success:hover::before {
+    width: 300px;
+    height: 300px;
+}
+
+.btn-success:hover {
+    box-shadow: 0 8px 25px rgba(40, 167, 69, 0.5);
+    transform: translateY(-2px);
+}
+
+.btn-success:active {
+    transform: translateY(0);
+}
+
+.btn-success.downloaded {
+    background: linear-gradient(135deg, #6c757d, #5a6268);
+    cursor: default;
+    pointer-events: none;
+}
+
+.btn-link {
+    background: none;
+    color: #667eea;
+    text-decoration: none;
+    padding: 10px 20px;
+}
+
+.btn-link:hover {
+    background: rgba(102, 126, 234, 0.1);
+    transform: none;
+}
+
+/* 下载状态 */
+.download-status {
+    text-align: center;
+    margin-top: 15px;
+    animation: fadeInUp 0.5s ease-out;
+}
+
+.status-message {
+    display: inline-block;
+    padding: 12px 24px;
+    background: linear-gradient(135deg, #d4edda, #c3e6cb);
+    color: #155724;
+    border-radius: 8px;
+    font-weight: 600;
+    border-left: 4px solid #28a745;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.modal-footer {
+    padding: 20px 35px;
+    border-top: 1px solid #e0e0e0;
+    text-align: center;
+    background: #f8f9fa;
+    border-radius: 0 0 20px 20px;
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+    .modal-content {
+        width: 95%;
+        max-height: 95vh;
+    }
+
+    .modal-body {
+        padding: 25px;
+    }
+
+    .button-group-modal {
+        grid-template-columns: 1fr;
+    }
+
+    .info-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+    }
+
+    .info-row .value {
+        text-align: left;
+        max-width: 100%;
+    }
+
+    .security-notice {
+        flex-direction: column;
+        text-align: center;
+    }
+}
+
+/* 滚动条美化 */
+.modal-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.modal-content::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 0 20px 20px 0;
+}
+
+.modal-content::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    border-radius: 4px;
+}
+
+.modal-content::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, #764ba2, #667eea);
 }
 </style>
 {% endblock %}
