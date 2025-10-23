@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
+from datetime import datetime
 import os
 
 import config
@@ -16,22 +17,12 @@ from cleanup import start_cleanup_scheduler
 async def lifespan(app: FastAPI):
     # 启动时执行
     print("🚀 正在启动 E2EE File Transfer 系统...")
-
-    # 初始化目录
     config.init_directories()
-
-    # 初始化数据库
     await database.init_database()
-
-    # 启动定时清理任务
     scheduler = start_cleanup_scheduler()
-
     print("✅ 系统启动完成!")
     print(f"🌐 访问地址: {config.BASE_URL}")
-
     yield
-
-    # 关闭时执行
     scheduler.shutdown()
     print("👋 系统已关闭")
 
@@ -51,6 +42,37 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 
+# ==================== 辅助函数 ====================
+
+async def validate_transfer_access(url_token: str, check_file: bool = False):
+    """
+    验证传输链接的访问权限
+    :param url_token: URL Token
+    :param check_file: 是否检查文件是否存在
+    :return: transfer 记录
+    :raises HTTPException: 如果验证失败
+    """
+    transfer = await database.get_transfer_by_token(url_token)
+
+    # 1. 检查传输记录是否存在
+    if not transfer:
+        raise HTTPException(status_code=404, detail="链接不存在")
+
+    # 2. 检查是否已过期
+    expires_at = datetime.fromisoformat(transfer['expires_at'])
+    if datetime.now() > expires_at:
+        raise HTTPException(status_code=404)
+
+    # 3. 检查是否已下载（已完成传输）
+    if transfer['downloaded']:
+        raise HTTPException(status_code=404)
+
+    # 4. 可选：检查文件是否存在
+    if check_file and not transfer['encrypted_file_path']:
+        raise HTTPException(status_code=404, detail="文件尚未上传")
+
+    return transfer
+
 # ==================== 路由定义 ====================
 
 @app.get("/", response_class=HTMLResponse)
@@ -65,10 +87,7 @@ async def index(request: Request):
 @app.get("/health")
 async def health_check():
     """健康检查接口"""
-    return {
-        "status": "healthy",
-        "version": "1.0.0"
-    }
+    return {"status": "healthy", "version": "1.0.0"}
 
 
 # ==================== API 接口 ====================
@@ -79,19 +98,12 @@ class CreateTransferRequest(BaseModel):
 
 @app.post("/api/create-transfer")
 async def create_transfer(request: CreateTransferRequest):
-    """
-    创建新的传输记录
-    接收公钥，生成 URL Token
-    """
+    """创建新的传输记录"""
     try:
-        # 验证公钥格式
         if not request.public_key.startswith("-----BEGIN PUBLIC KEY-----"):
             raise HTTPException(status_code=400, detail="无效的公钥格式")
 
-        # 创建传输记录
         result = await database.create_transfer(request.public_key)
-
-        # 记录日志
         await database.log_action(result["url_token"], "created", "生成接收链接")
 
         return {
@@ -100,7 +112,6 @@ async def create_transfer(request: CreateTransferRequest):
             "expires_at": result["expires_at"],
             "receive_url": f"{config.BASE_URL}/receive/{result['url_token']}"
         }
-
     except Exception as e:
         print(f"❌ 创建传输失败: {e}")
         raise HTTPException(status_code=500, detail="服务器错误")
@@ -108,21 +119,11 @@ async def create_transfer(request: CreateTransferRequest):
 
 @app.get("/api/get-public-key/{url_token}")
 async def get_public_key(url_token: str):
-    """
-    获取指定传输的公钥
-    """
-    from datetime import datetime
+    """获取指定传输的公钥"""
+    # 验证访问权限（不需要文件存在）
+    transfer = await validate_transfer_access(url_token, check_file=False)
 
-    transfer = await database.get_transfer_by_token(url_token)
-    if not transfer:
-        raise HTTPException(status_code=404, detail="接收链接不存在或已过期")
-
-    # 检查是否过期
-    expires_at = datetime.fromisoformat(transfer['expires_at'])
-    if datetime.now() > expires_at:
-        raise HTTPException(status_code=410, detail="链接已过期")
-
-    # 检查是否已有文件
+    # 检查是否已有文件（一个链接只能上传一次）
     if transfer['encrypted_file_path']:
         raise HTTPException(status_code=409, detail="该链接已接收过文件")
 
@@ -196,9 +197,8 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=f"上传失败: {str(e)}")
 
 
-# ==================== 新增：分块上传 API ====================
+# ==================== 分块上传 API ====================
 
-# 临时存储分片信息
 upload_sessions = {}
 
 
@@ -212,14 +212,10 @@ async def upload_chunk(
         encrypted_aes_key: str = Form(...),
         original_filename: str = Form(...)
 ):
-    """
-    分片上传接口（支持断点续传）
-    """
+    """分片上传接口（支持断点续传）"""
     try:
         # 验证传输记录
-        transfer = await database.get_transfer_by_token(url_token)
-        if not transfer:
-            raise HTTPException(status_code=404, detail="接收链接不存在")
+        transfer = await validate_transfer_access(url_token, check_file=False)
 
         # 初始化上传会话
         session_key = f"{url_token}_{upload_id}"
@@ -256,6 +252,8 @@ async def upload_chunk(
             "total_chunks": total_chunks
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ 分片上传失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -263,9 +261,7 @@ async def upload_chunk(
 
 @app.post("/api/finalize-upload/{url_token}")
 async def finalize_upload(url_token: str, request: Request):
-    """
-    完成分片上传，合并所有分片
-    """
+    """完成分片上传，合并所有分片"""
     try:
         body = await request.json()
         upload_id = body.get("upload_id")
@@ -293,8 +289,6 @@ async def finalize_upload(url_token: str, request: Request):
                 chunk_path = session["chunks"][i]
                 with open(chunk_path, "rb") as chunk_file:
                     final_file.write(chunk_file.read())
-
-                # 删除临时分片
                 os.remove(chunk_path)
 
         # 删除临时目录
@@ -347,25 +341,20 @@ async def finalize_upload(url_token: str, request: Request):
 async def receive_page(request: Request, url_token: str):
     """
     接收页面 - 根据状态显示上传或下载界面
+    失效/过期/不存在的链接直接抛出 HTTPException，让浏览器处理 404
     """
-    transfer = await database.get_transfer_by_token(url_token)
-    if not transfer:
-        return templates.TemplateResponse("error.html", {
-            "request": request,
-            "error_title": "链接不存在",
-            "error_message": "该接收链接不存在或已过期"
-        })
+    # 🔥 直接验证，失败会抛出 HTTPException
+    # FastAPI 会自动返回标准的 JSON 错误响应
+    transfer = await validate_transfer_access(url_token, check_file=False)
 
     # 检查是否已有文件
     if transfer['encrypted_file_path']:
-        # 已有文件，显示下载页面
         return templates.TemplateResponse("download.html", {
             "request": request,
             "url_token": url_token,
             "base_url": config.BASE_URL
         })
     else:
-        # 无文件，显示上传页面
         return templates.TemplateResponse("upload.html", {
             "request": request,
             "url_token": url_token,
@@ -375,15 +364,9 @@ async def receive_page(request: Request, url_token: str):
 
 @app.get("/api/get-file-info/{url_token}")
 async def get_file_info(url_token: str):
-    """
-    获取文件信息（用于下载页面显示）
-    """
-    transfer = await database.get_transfer_by_token(url_token)
-    if not transfer:
-        raise HTTPException(status_code=404, detail="传输记录不存在")
-
-    if not transfer['encrypted_file_path']:
-        raise HTTPException(status_code=404, detail="文件尚未上传")
+    """获取文件信息（用于下载页面显示）"""
+    # 验证访问权限并要求文件存在
+    transfer = await validate_transfer_access(url_token, check_file=True)
 
     return {
         "original_filename": transfer['original_filename'],
@@ -394,12 +377,9 @@ async def get_file_info(url_token: str):
 
 @app.get("/api/download/{url_token}")
 async def download_encrypted_file(url_token: str):
-    """
-    下载加密文件
-    """
-    transfer = await database.get_transfer_by_token(url_token)
-    if not transfer or not transfer['encrypted_file_path']:
-        raise HTTPException(status_code=404, detail="文件不存在")
+    """下载加密文件"""
+    # 验证访问权限并要求文件存在
+    transfer = await validate_transfer_access(url_token, check_file=True)
 
     file_path = transfer['encrypted_file_path']
     if not os.path.exists(file_path):
@@ -414,11 +394,11 @@ async def download_encrypted_file(url_token: str):
 
 @app.get("/api/get-encrypted-key/{url_token}")
 async def get_encrypted_key(url_token: str):
-    """
-    获取加密的 AES 密钥
-    """
-    transfer = await database.get_transfer_by_token(url_token)
-    if not transfer or not transfer['encrypted_aes_key']:
+    """获取加密的 AES 密钥"""
+    # 验证访问权限并要求文件存在
+    transfer = await validate_transfer_access(url_token, check_file=True)
+
+    if not transfer['encrypted_aes_key']:
         raise HTTPException(status_code=404, detail="密钥不存在")
 
     return {
@@ -428,13 +408,10 @@ async def get_encrypted_key(url_token: str):
 
 @app.post("/api/confirm-download/{url_token}")
 async def confirm_download(url_token: str):
-    """
-    确认下载完成，删除服务器文件
-    """
+    """确认下载完成，删除服务器文件"""
     try:
-        transfer = await database.get_transfer_by_token(url_token)
-        if not transfer:
-            raise HTTPException(status_code=404, detail="传输记录不存在")
+        # 验证访问权限
+        transfer = await validate_transfer_access(url_token, check_file=False)
 
         # 删除文件
         if transfer['encrypted_file_path'] and os.path.exists(transfer['encrypted_file_path']):
@@ -452,6 +429,8 @@ async def confirm_download(url_token: str):
             "message": "文件已删除"
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ 确认下载失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))

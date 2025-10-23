@@ -41,11 +41,11 @@
     <div class="info-box">
         <h3>🔓 解密流程</h3>
         <ol>
-            <li>上传你之前下载的 <strong>private_key.pem</strong> 文件</li>
-            <li>系统将下载加密文件和加密的密钥</li>
-            <li>浏览器使用私钥解密 AES 密钥</li>
-            <li>使用 AES 密钥解密文件</li>
-            <li>自动下载解密后的原始文件</li>
+            <li>上传你之前下载的 <strong>private_key_xxxx.pem</strong> 文件</li>
+            <li>浏览器将下载加密文件和公钥加密的AES密钥</li>
+            <li>浏览器使用私钥解密AES密钥</li>
+            <li>浏览器使用AES密钥解密文件</li>
+            <li>下载解密后的原始文件</li>
         </ol>
     </div>
 
@@ -105,7 +105,7 @@
     <div id="step-success" style="display: none;">
         <div class="message success">
             <h3>✅ 文件解密成功！</h3>
-            <p>文件已自动下载到你的设备。</p>
+            <p>文件已下载解密完成，请保存到你的设备设备。</p>
             <p>服务器上的加密文件已被删除。</p>
         </div>
 
@@ -114,12 +114,6 @@
             <p><strong>文件名：</strong><span id="successFilename"></span></p>
             <p><strong>大小：</strong><span id="successFileSize"></span></p>
         </div>
-
-        <div style="margin-top: 20px;">
-            <a href="/" class="btn btn-secondary" style="display: inline-block;">🏠 返回首页</a>
-        </div>
-    </div>🏠 返回首页
-        </button>
     </div>
 </div>
 
@@ -179,6 +173,9 @@ async function handlePrivateKeySelect(event) {
     if (!file) return;
 
     try {
+        // 🔥 关键修复：清除之前的错误提示
+        clearError();
+
         // 读取私钥文件
         const privateKeyPem = await readFileAsText(file);
 
@@ -207,12 +204,15 @@ async function startDecryption() {
         return;
     }
 
+    // 🔥 关键修复：切换界面时清除错误提示
+    clearError();
+
     // 切换到解密界面
     document.getElementById('step-upload-key').style.display = 'none';
     document.getElementById('step-decrypting').style.display = 'block';
 
     try {
-        const isLargeFile = fileInfo.file_size > 50 * 1024 * 1024; // 50MB 以上使用分块
+        const isLargeFile = fileInfo.file_size > 50 * 1024 * 1024;
 
         // 1. 下载加密文件
         updateProgress(10, '正在下载加密文件...');
@@ -221,7 +221,6 @@ async function startDecryption() {
             throw new Error('下载加密文件失败');
         }
 
-        // 使用流式读取（支持大文件）
         const reader = fileResponse.body.getReader();
         const chunks = [];
         let receivedLength = 0;
@@ -233,12 +232,10 @@ async function startDecryption() {
             chunks.push(value);
             receivedLength += value.length;
 
-            // 更新下载进度
             const downloadPercent = Math.round(receivedLength / fileInfo.file_size * 100);
             updateProgress(10 + downloadPercent * 0.2, `下载中... ${downloadPercent}%`);
         }
 
-        // 合并下载的数据
         const encryptedData = new Uint8Array(receivedLength);
         let position = 0;
         for(const chunk of chunks) {
@@ -269,11 +266,9 @@ async function startDecryption() {
         let decryptedFile;
 
         if (isLargeFile) {
-            // 大文件：分块解密
             updateProgress(55, '正在解密大文件（分块处理）...');
 
-            // 将加密数据分块
-            const CHUNK_SIZE = 5 * 1024 * 1024 + 16; // 5MB + GCM tag
+            const CHUNK_SIZE = 5 * 1024 * 1024 + 16;
             const encryptedChunks = [];
 
             for (let i = 0; i < encryptedFile.length; i += CHUNK_SIZE) {
@@ -289,7 +284,6 @@ async function startDecryption() {
                 }
             );
         } else {
-            // 小文件：整体解密
             updateProgress(60, '正在解密文件内容...');
             decryptedFile = await decryptFileWithAES(encryptedFile.buffer, aesKey, iv);
         }
@@ -325,22 +319,46 @@ async function startDecryption() {
         document.getElementById('step-decrypting').style.display = 'none';
         document.getElementById('step-upload-key').style.display = 'block';
         document.getElementById('privateKeyInput').value = '';
+
+        // 🔥 关键修复：重置私钥变量，允许重新上传
+        privateKey = null;
     }
 }
 
 function updateProgress(percent, text) {
-    // 将传入的百分比格式化为最多两位小数
     const formattedPercent = parseFloat(percent.toFixed(2));
-
     document.getElementById('progressFill').style.width = formattedPercent + '%';
     document.getElementById('progressText').textContent = formattedPercent + '%';
     document.getElementById('decryptStatusText').textContent = text;
 }
 
 function showError(message) {
-    document.getElementById('status-message').innerHTML = `
-        <div class="message error">❌ ${message}</div>
-    `;
+    const statusMsg = document.getElementById('status-message');
+    statusMsg.innerHTML = `<div class="message error">❌ ${message}</div>`;
+    statusMsg.style.display = 'block';
+}
+
+// 🔥 新增：清除错误提示函数
+function clearError() {
+    const statusMsg = document.getElementById('status-message');
+    statusMsg.innerHTML = '';
+    statusMsg.style.display = 'none';
+}
+
+function updateTimelineCompleted() {
+    const steps = document.querySelectorAll('.timeline-step');
+    const lines = document.querySelectorAll('.timeline-line');
+
+    steps.forEach(step => {
+        step.classList.remove('active');
+        step.classList.add('completed');
+        const marker = step.querySelector('.step-marker');
+        marker.innerHTML = '✓';
+    });
+
+    lines.forEach(line => {
+        line.classList.add('completed');
+    });
 }
 
 function updateTimelineToCompleted() {

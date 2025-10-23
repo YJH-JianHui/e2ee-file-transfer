@@ -101,10 +101,6 @@
                 <li>文件将在 <strong>24 小时后</strong>或<strong>下载后</strong>自动删除</li>
             </ul>
         </div>
-
-        <div style="margin-top: 20px;">
-            <a href="/" class="btn btn-secondary" style="display: inline-block;">🏠 返回首页</a>
-        </div>
     </div>
 </div>
 
@@ -213,7 +209,7 @@ async function startUpload() {
     document.getElementById('step-uploading').style.display = 'block';
 
     try {
-        const isLargeFile = selectedFile.size > 50 * 1024 * 1024; // 50MB 以上使用分块
+        const isLargeFile = selectedFile.size > 50 * 1024 * 1024;
 
         // 2. 生成 AES 密钥
         updateProgress(5, '正在生成加密密钥...');
@@ -233,7 +229,6 @@ async function startUpload() {
                 }
             );
 
-            // 合并所有加密分块
             const totalLength = iv.length + encryptedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
             combinedData = new Uint8Array(totalLength);
             combinedData.set(iv, 0);
@@ -252,7 +247,6 @@ async function startUpload() {
             updateProgress(30, '正在加密文件...');
             const { encrypted, iv } = await encryptFileWithAES(fileData, aesKey);
 
-            // 合并 IV 和密文
             combinedData = new Uint8Array(iv.length + encrypted.byteLength);
             combinedData.set(iv, 0);
             combinedData.set(new Uint8Array(encrypted), iv.length);
@@ -262,13 +256,12 @@ async function startUpload() {
         updateProgress(55, '正在加密传输密钥...');
         const encryptedAESKey = await encryptAESKeyWithRSA(aesKey, publicKey);
 
-        // 5. 分片上传到服务器（支持断点续传）
+        // 5. 分片上传到服务器
         updateProgress(60, '正在准备上传...');
 
-        const UPLOAD_CHUNK_SIZE = 5 * 1024 * 1024; // 5MB per upload chunk
+        const UPLOAD_CHUNK_SIZE = 5 * 1024 * 1024;
         const totalUploadChunks = Math.ceil(combinedData.length / UPLOAD_CHUNK_SIZE);
-
-        const uploadId = Date.now().toString(); // 上传会话 ID
+        const uploadId = Date.now().toString();
 
         for (let i = 0; i < totalUploadChunks; i++) {
             const start = i * UPLOAD_CHUNK_SIZE;
@@ -283,7 +276,6 @@ async function startUpload() {
             formData.append('encrypted_aes_key', arrayBufferToBase64(encryptedAESKey));
             formData.append('original_filename', selectedFile.name);
 
-            // 上传分片（支持重试）
             let retries = 3;
             while (retries > 0) {
                 try {
@@ -296,16 +288,15 @@ async function startUpload() {
                         throw new Error(`上传分片失败: ${response.status}`);
                     }
 
-                    break; // 成功，跳出重试循环
+                    break;
                 } catch (error) {
                     retries--;
                     if (retries === 0) throw error;
                     console.warn(`分片 ${i} 上传失败，重试中... (剩余 ${retries} 次)`);
-                    await new Promise(resolve => setTimeout(resolve, 1000)); // 等待1秒后重试
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             }
 
-            // 更新上传进度
             const uploadPercent = Math.round((i + 1) / totalUploadChunks * 100);
             updateProgress(60 + uploadPercent * 0.35, `正在上传文件... ${uploadPercent}%`);
         }
@@ -327,6 +318,9 @@ async function startUpload() {
 
         updateProgress(100, '上传完成！');
 
+        // 🔥 关键修复：更新时间线状态
+        updateTimelineToUploaded();
+
         // 显示成功界面
         setTimeout(() => {
             document.getElementById('step-uploading').style.display = 'none';
@@ -339,6 +333,30 @@ async function startUpload() {
         document.getElementById('step-uploading').style.display = 'none';
         document.getElementById('step-select').style.display = 'block';
     }
+}
+
+// 🔥 新增：更新时间线到"已上传"状态
+function updateTimelineToUploaded() {
+    const steps = document.querySelectorAll('.timeline-step');
+    const lines = document.querySelectorAll('.timeline-line');
+
+    // 第一步：链接已创建（已完成）
+    steps[0].classList.add('completed');
+    steps[0].classList.remove('active');
+
+    // 第二步：文件已上传（完成）
+    steps[1].classList.add('completed');
+    steps[1].classList.remove('active');
+    steps[1].querySelector('.step-marker').innerHTML = '✓';
+
+    // 第二条线：完成
+    if (lines[1]) {
+        lines[1].classList.add('completed');
+    }
+
+    // 第三步：等待下载（激活）
+    steps[2].classList.add('active');
+    steps[2].classList.remove('completed');
 }
 
 function updateProgress(percent, text) {
