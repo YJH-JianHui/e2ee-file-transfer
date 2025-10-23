@@ -459,9 +459,22 @@ async def confirm_download(url_token: str):
 
 # ==================== 统计和日志 API ====================
 
+class StatsPasswordRequest(BaseModel):
+    password: str
+
+
+@app.post("/api/verify-stats-password")
+async def verify_stats_password(request: StatsPasswordRequest):
+    """验证统计页面密码"""
+    if request.password == config.STATS_PASSWORD:
+        return {"success": True}
+    else:
+        return {"success": False}
+
+
 @app.get("/stats", response_class=HTMLResponse)
 async def stats_page(request: Request):
-    """统计页面"""
+    """统计页面（需要密码验证）"""
     return templates.TemplateResponse("stats.html", {
         "request": request
     })

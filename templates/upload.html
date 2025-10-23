@@ -3,6 +3,37 @@
 {% block title %}上传文件 - E2EE 文件传输{% endblock %}
 
 {% block content %}
+<!-- 状态时间线 -->
+<div class="card status-timeline-card">
+    <h3>📊 传输进度</h3>
+    <div class="timeline-horizontal">
+        <div class="timeline-step completed">
+            <div class="step-marker">✓</div>
+            <div class="step-label">链接已创建</div>
+        </div>
+        <div class="timeline-line completed"></div>
+
+        <div class="timeline-step active">
+            <div class="step-marker">
+                <div class="pulse"></div>
+            </div>
+            <div class="step-label">等待上传</div>
+        </div>
+        <div class="timeline-line"></div>
+
+        <div class="timeline-step">
+            <div class="step-marker">○</div>
+            <div class="step-label">等待下载</div>
+        </div>
+        <div class="timeline-line"></div>
+
+        <div class="timeline-step">
+            <div class="step-marker">○</div>
+            <div class="step-label">传输完成</div>
+        </div>
+    </div>
+</div>
+
 <div class="card">
     <h2>📤 安全上传文件</h2>
     <p>你正在向接收者发送加密文件。文件将在浏览器端加密后上传。</p>
@@ -25,9 +56,9 @@
             <input type="file" id="fileInput" style="display: none;" onchange="handleFileSelect(event)">
             <div class="upload-icon">📁</div>
             <p><strong>点击选择文件</strong> 或拖拽到此处</p>
-            <p class="text-muted">最大支持 2048MB</p>
+            <p class="text-muted">最大支持 5GB</p>
         </div>
-        
+
         <div id="fileInfo" style="display: none;">
             <div class="file-preview">
                 <div class="file-icon">📄</div>
@@ -60,11 +91,7 @@
         <div class="message success">
             <h3>✅ 上传成功！</h3>
             <p>文件已安全加密并上传到服务器。</p>
-            <p>接收者可以使用此链接下载文件：</p>
-            <div class="link-box">
-                <input type="text" id="downloadLink" readonly value="{{ base_url }}/receive/{{ url_token }}">
-                <button class="btn" onclick="copyDownloadLink()">📋 复制链接</button>
-            </div>
+            <p>接收者可以访问相同的链接下载文件。</p>
         </div>
 
         <div class="message info">
@@ -73,6 +100,10 @@
                 <li>需要使用之前下载的 <code>private_key.pem</code> 文件</li>
                 <li>文件将在 <strong>24 小时后</strong>或<strong>下载后</strong>自动删除</li>
             </ul>
+        </div>
+
+        <div style="margin-top: 20px;">
+            <a href="/" class="btn btn-secondary" style="display: inline-block;">🏠 返回首页</a>
         </div>
     </div>
 </div>
@@ -150,10 +181,10 @@ function handleFileSelect(event) {
     const file = event.target.files[0];
     if (!file) return;
 
-    // 检查文件大小 (2048MB)
-    const maxSize = 2048 * 1024 * 1024;
+    // 检查文件大小 (5GB)
+    const maxSize = 5120 * 1024 * 1024;
     if (file.size > maxSize) {
-        showError('文件大小超过 2048MB 限制');
+        showError('文件大小超过 5GB 限制');
         return;
     }
 
@@ -177,21 +208,22 @@ async function startUpload() {
         return;
     }
 
+    // 切换到上传界面
     document.getElementById('step-select').style.display = 'none';
     document.getElementById('step-uploading').style.display = 'block';
 
     try {
         const isLargeFile = selectedFile.size > 50 * 1024 * 1024; // 50MB 以上使用分块
 
+        // 2. 生成 AES 密钥
         updateProgress(5, '正在生成加密密钥...');
         const aesKey = await generateAESKey();
 
         let combinedData;
-        let metadata;
 
         if (isLargeFile) {
             // 大文件：分块加密
-            updateProgress(10, '正在加密文件（分块模式）...');
+            updateProgress(10, `正在加密文件（共 ${formatFileSize(selectedFile.size)}）...`);
 
             const { encryptedChunks, iv } = await encryptFileInChunks(
                 selectedFile,
@@ -201,64 +233,42 @@ async function startUpload() {
                 }
             );
 
-            // 创建元数据（4字节标识 + 4字节分块数量）
-            metadata = new Uint8Array(8);
-            const dataView = new DataView(metadata.buffer);
-            dataView.setUint32(0, 0x43484E4B, false); // "CHNK" 标识
-            dataView.setUint32(4, encryptedChunks.length, false); // 分块数量
-
-            // 合并：元数据 + IV + 所有加密分块
-            const totalLength = metadata.length + iv.length +
-                encryptedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-
+            // 合并所有加密分块
+            const totalLength = iv.length + encryptedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
             combinedData = new Uint8Array(totalLength);
-            let offset = 0;
+            combinedData.set(iv, 0);
 
-            combinedData.set(metadata, offset);
-            offset += metadata.length;
-
-            combinedData.set(iv, offset);
-            offset += iv.length;
-
+            let offset = iv.length;
             for (const chunk of encryptedChunks) {
                 combinedData.set(chunk, offset);
                 offset += chunk.length;
             }
-
-            console.log(`✅ 分块加密完成: ${encryptedChunks.length} 个分块`);
 
         } else {
             // 小文件：整体加密
             updateProgress(10, '正在读取文件...');
             const fileData = await readFileAsArrayBuffer(selectedFile);
 
-            updateProgress(30, '正在加密文件（整体模式）...');
+            updateProgress(30, '正在加密文件...');
             const { encrypted, iv } = await encryptFileWithAES(fileData, aesKey);
 
-            // 创建元数据（标识为非分块）
-            metadata = new Uint8Array(8);
-            const dataView = new DataView(metadata.buffer);
-            dataView.setUint32(0, 0x57484F4C, false); // "WHOL" 标识
-            dataView.setUint32(4, 0, false); // 非分块
-
-            // 合并：元数据 + IV + 密文
-            combinedData = new Uint8Array(metadata.length + iv.length + encrypted.byteLength);
-            combinedData.set(metadata, 0);
-            combinedData.set(iv, metadata.length);
-            combinedData.set(new Uint8Array(encrypted), metadata.length + iv.length);
-
-            console.log('✅ 整体加密完成');
+            // 合并 IV 和密文
+            combinedData = new Uint8Array(iv.length + encrypted.byteLength);
+            combinedData.set(iv, 0);
+            combinedData.set(new Uint8Array(encrypted), iv.length);
         }
 
-        // 用 RSA 公钥加密 AES 密钥
+        // 4. 用 RSA 公钥加密 AES 密钥
         updateProgress(55, '正在加密传输密钥...');
         const encryptedAESKey = await encryptAESKeyWithRSA(aesKey, publicKey);
 
-        // 分片上传
+        // 5. 分片上传到服务器（支持断点续传）
         updateProgress(60, '正在准备上传...');
-        const UPLOAD_CHUNK_SIZE = 5 * 1024 * 1024;
+
+        const UPLOAD_CHUNK_SIZE = 5 * 1024 * 1024; // 5MB per upload chunk
         const totalUploadChunks = Math.ceil(combinedData.length / UPLOAD_CHUNK_SIZE);
-        const uploadId = Date.now().toString();
+
+        const uploadId = Date.now().toString(); // 上传会话 ID
 
         for (let i = 0; i < totalUploadChunks; i++) {
             const start = i * UPLOAD_CHUNK_SIZE;
@@ -273,6 +283,7 @@ async function startUpload() {
             formData.append('encrypted_aes_key', arrayBufferToBase64(encryptedAESKey));
             formData.append('original_filename', selectedFile.name);
 
+            // 上传分片（支持重试）
             let retries = 3;
             while (retries > 0) {
                 try {
@@ -281,19 +292,25 @@ async function startUpload() {
                         body: formData
                     });
 
-                    if (!response.ok) throw new Error(`上传失败: ${response.status}`);
-                    break;
+                    if (!response.ok) {
+                        throw new Error(`上传分片失败: ${response.status}`);
+                    }
+
+                    break; // 成功，跳出重试循环
                 } catch (error) {
                     retries--;
                     if (retries === 0) throw error;
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    console.warn(`分片 ${i} 上传失败，重试中... (剩余 ${retries} 次)`);
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // 等待1秒后重试
                 }
             }
 
+            // 更新上传进度
             const uploadPercent = Math.round((i + 1) / totalUploadChunks * 100);
-            updateProgress(60 + uploadPercent * 0.35, `正在上传... ${uploadPercent}%`);
+            updateProgress(60 + uploadPercent * 0.35, `正在上传文件... ${uploadPercent}%`);
         }
 
+        // 6. 完成上传
         updateProgress(95, '正在完成上传...');
         const finalResponse = await fetch(`/api/finalize-upload/${urlToken}`, {
             method: 'POST',
@@ -304,10 +321,13 @@ async function startUpload() {
             })
         });
 
-        if (!finalResponse.ok) throw new Error('完成上传失败');
+        if (!finalResponse.ok) {
+            throw new Error('完成上传失败');
+        }
 
         updateProgress(100, '上传完成！');
 
+        // 显示成功界面
         setTimeout(() => {
             document.getElementById('step-uploading').style.display = 'none';
             document.getElementById('step-success').style.display = 'block';
@@ -322,14 +342,8 @@ async function startUpload() {
 }
 
 function updateProgress(percent, text) {
-    // 将传入的百分比数字格式化为最多两位小数的字符串
-    const formattedPercentString = percent.toFixed(2);
-
-    // 使用 parseFloat 将其转回数字，这样可以去掉末尾多余的 .00 (例如 100.00 会变成 100)
-    const formattedPercentNumber = parseFloat(formattedPercentString);
-
-    document.getElementById('progressFill').style.width = formattedPercentNumber + '%';
-    document.getElementById('progressText').textContent = formattedPercentNumber + '%';
+    document.getElementById('progressFill').style.width = percent + '%';
+    document.getElementById('progressText').textContent = percent + '%';
     document.getElementById('uploadStatusText').textContent = text;
 }
 
@@ -459,6 +473,149 @@ function showError(message) {
 .feature-item p {
     font-size: 0.9rem;
     color: #666;
+}
+
+.button-group {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+@media (max-width: 768px) {
+    .button-group {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 状态时间线样式 */
+.status-timeline-card {
+    background: linear-gradient(135deg, #f0f4ff 0%, #e8f0ff 100%);
+    border-left: 4px solid #667eea;
+    margin-bottom: 20px;
+}
+
+.status-timeline-card h3 {
+    color: #667eea;
+    margin-bottom: 20px;
+    font-size: 1.2rem;
+}
+
+.timeline-horizontal {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+}
+
+.timeline-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;
+}
+
+.step-marker {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #e0e0e0;
+    color: #999;
+    font-weight: bold;
+    font-size: 1.2rem;
+    border: 3px solid white;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+}
+
+.timeline-step.completed .step-marker {
+    background: linear-gradient(135deg, #28a745, #20c997);
+    color: white;
+}
+
+.timeline-step.active .step-marker {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    animation: markerPulse 2s ease-in-out infinite;
+}
+
+@keyframes markerPulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3); }
+    50% { transform: scale(1.1); box-shadow: 0 4px 15px rgba(102, 126, 234, 0.6); }
+}
+
+.pulse {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: white;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(0.8); opacity: 1; }
+    50% { transform: scale(1.2); opacity: 0.7; }
+}
+
+.step-label {
+    font-size: 0.85rem;
+    color: #666;
+    text-align: center;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.timeline-step.completed .step-label {
+    color: #28a745;
+}
+
+.timeline-step.active .step-label {
+    color: #667eea;
+}
+
+.timeline-line {
+    flex: 1;
+    height: 3px;
+    background: #e0e0e0;
+    margin: 0 10px;
+    position: relative;
+    top: -20px;
+}
+
+.timeline-line.completed {
+    background: linear-gradient(90deg, #28a745, #20c997);
+}
+
+/* 响应式优化 */
+@media (max-width: 768px) {
+    .timeline-horizontal {
+        overflow-x: auto;
+        justify-content: flex-start;
+        padding-bottom: 10px;
+    }
+
+    .timeline-step {
+        flex: 0 0 80px;
+    }
+
+    .step-marker {
+        width: 40px;
+        height: 40px;
+        font-size: 1rem;
+    }
+
+    .step-label {
+        font-size: 0.75rem;
+    }
+
+    .timeline-line {
+        min-width: 30px;
+        top: -15px;
+    }
 }
 </style>
 {% endblock %}

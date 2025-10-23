@@ -12,7 +12,7 @@
         <ol>
             <li>浏览器将在本地生成 <strong>RSA-4096 非对称密钥对</strong></li>
             <li><strong>公钥</strong>上传到服务器，用于加密</li>
-            <li><strong>私钥</strong>自动下载到你的设备（绝不上传）</li>
+            <li><strong>私钥</strong>保存在你的设备（绝不上传）</li>
             <li>将生成的链接分享给发送者</li>
             <li>收到文件后，使用私钥解密</li>
         </ol>
@@ -33,29 +33,54 @@
     </div>
 
     <div id="step-3" style="display: none;">
-        <div class="message success">
-            ✅ 密钥对生成成功！私钥已自动下载到本地。
-        </div>
-
-        <div class="link-box">
-            <label><strong>📎 你的接收链接：</strong></label>
-            <input type="text" id="receiveLink" readonly>
-            <button class="btn" onclick="copyLink()">📋 复制链接</button>
-        </div>
-
-        <div class="message info">
-            <strong>⚠️ 重要提示：</strong>
-            <ul>
-                <li>请妥善保管下载的 <code>private_key.pem</code> 文件</li>
-                <li>私钥丢失后将<strong>无法解密</strong>收到的文件</li>
-                <li>将接收链接分享给发送者（微信/邮件/QQ等）</li>
-                <li>链接有效期 <strong>24 小时</strong></li>
-            </ul>
-        </div>
-
         <button class="btn btn-secondary" onclick="location.reload()">
             🔄 生成新链接
         </button>
+    </div>
+</div>
+
+<!-- 模态对话框 -->
+<div id="resultModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>✅ 接收链接生成成功</h2>
+        </div>
+
+        <div class="modal-body">
+            <div class="warning-box">
+                <div class="warning-icon">⚠️</div>
+                <h3>重要提示</h3>
+                <ul>
+                    <li>请<strong>立即保存私钥</strong>，私钥丢失后将<strong>无法解密</strong>收到的文件</li>
+                    <li>私钥文件名为 <code id="keyFileName">private_key.pem</code></li>
+                    <li>将下方接收链接分享给发送者（微信/邮件/QQ等）</li>
+                    <li>链接有效期 <strong>24 小时</strong></li>
+                </ul>
+            </div>
+
+            <div class="action-section">
+                <h3>📎 你的接收链接</h3>
+                <div class="link-display">
+                    <input type="text" id="receiveLink" readonly onclick="this.select()">
+                </div>
+                <div class="button-group">
+                    <button class="btn btn-primary" onclick="copyLinkFromModal()">
+                        📋 复制链接
+                    </button>
+                    <button class="btn btn-success" id="downloadKeyBtn" onclick="downloadPrivateKeyNow()">
+                        💾 保存私钥
+                    </button>
+                </div>
+            </div>
+
+            <div id="modalMessage" class="modal-message"></div>
+        </div>
+
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal()">
+                关闭
+            </button>
+        </div>
     </div>
 </div>
 
@@ -80,6 +105,7 @@
 <script src="/static/js/crypto.js"></script>
 <script>
 let currentUrlToken = null;
+let privateKeyData = null;
 
 async function generateReceiveLink() {
     const generateBtn = document.getElementById('generateBtn');
@@ -119,16 +145,22 @@ async function generateReceiveLink() {
         const data = await response.json();
         currentUrlToken = data.url_token;
 
-        // 4. 下载私钥到本地
-        const privateKeyPem = await exportPrivateKey(privateKey);
-        downloadPrivateKey(privateKeyPem, `private_key_${currentUrlToken}.pem`);
+        // 4. 导出私钥（暂不下载，存储到变量）
+        privateKeyData = {
+            pem: await exportPrivateKey(privateKey),
+            filename: `private_key_${currentUrlToken}.pem`
+        };
 
         // 5. 显示接收链接
         const receiveLink = `{{ base_url }}/receive/${data.url_token}`;
         document.getElementById('receiveLink').value = receiveLink;
+        document.getElementById('keyFileName').textContent = privateKeyData.filename;
 
         step2.style.display = 'none';
         step3.style.display = 'block';
+
+        // 显示模态对话框
+        openModal();
 
     } catch (error) {
         console.error('错误:', error);
@@ -142,13 +174,87 @@ async function generateReceiveLink() {
     }
 }
 
-function copyLink() {
+function openModal() {
+    const modal = document.getElementById('resultModal');
+    modal.style.display = 'flex';
+    // 添加动画类
+    setTimeout(() => {
+        modal.classList.add('show');
+    }, 10);
+}
+
+function closeModal() {
+    const modal = document.getElementById('resultModal');
+    modal.classList.remove('show');
+    setTimeout(() => {
+        modal.style.display = 'none';
+    }, 300);
+}
+
+function goToStatusPage() {
+    if (currentUrlToken) {
+        window.location.href = `/status/${currentUrlToken}`;
+    }
+}
+
+function downloadPrivateKeyNow() {
+    if (!privateKeyData) return;
+
+    downloadPrivateKey(privateKeyData.pem, privateKeyData.filename);
+
+    // 更新按钮状态
+    const btn = document.getElementById('downloadKeyBtn');
+    btn.innerHTML = '✅ 已保存';
+    btn.classList.add('btn-disabled');
+    btn.disabled = true;
+
+    showModalMessage('success', '✅ 私钥已保存到本地！');
+}
+
+function copyLinkFromModal() {
     const linkInput = document.getElementById('receiveLink');
     linkInput.select();
-    document.execCommand('copy');
-    
-    alert('✅ 链接已复制到剪贴板！');
+    linkInput.setSelectionRange(0, 99999); // For mobile
+
+    try {
+        document.execCommand('copy');
+        showModalMessage('success', '✅ 链接已复制到剪贴板！');
+    } catch (err) {
+        // 降级方案
+        navigator.clipboard.writeText(linkInput.value).then(() => {
+            showModalMessage('success', '✅ 链接已复制到剪贴板！');
+        }).catch(() => {
+            showModalMessage('error', '❌ 复制失败，请手动复制');
+        });
+    }
 }
+
+function showModalMessage(type, message) {
+    const msgDiv = document.getElementById('modalMessage');
+    msgDiv.className = `modal-message message ${type}`;
+    msgDiv.innerHTML = message;
+    msgDiv.style.display = 'block';
+
+    // 3秒后自动隐藏
+    setTimeout(() => {
+        msgDiv.style.display = 'none';
+    }, 3000);
+}
+
+// 点击对话框外部关闭
+window.onclick = function(event) {
+    const modal = document.getElementById('resultModal');
+    if (event.target === modal) {
+        closeModal();
+    }
+}
+
+// ESC 键关闭
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        closeModal();
+    }
+});
 </script>
 
 <style>
@@ -211,6 +317,173 @@ code {
     padding: 2px 6px;
     border-radius: 3px;
     font-family: 'Courier New', monospace;
+}
+
+/* 模态对话框样式 */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(5px);
+    justify-content: center;
+    align-items: center;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.modal.show {
+    opacity: 1;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 20px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    animation: modalSlideUp 0.3s ease-out;
+}
+
+@keyframes modalSlideUp {
+    from {
+        transform: translateY(50px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 25px 30px;
+    border-radius: 20px 20px 0 0;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+}
+
+.modal-body {
+    padding: 30px;
+}
+
+.warning-box {
+    background: linear-gradient(135deg, #fff3cd, #ffe9a6);
+    border-left: 4px solid #ffc107;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 25px;
+}
+
+.warning-icon {
+    font-size: 2.5rem;
+    text-align: center;
+    margin-bottom: 10px;
+}
+
+.warning-box h3 {
+    color: #856404;
+    margin-bottom: 15px;
+    font-size: 1.2rem;
+}
+
+.warning-box ul {
+    margin-left: 20px;
+    line-height: 1.8;
+    color: #856404;
+}
+
+.warning-box strong {
+    color: #dc3545;
+}
+
+.action-section {
+    margin-top: 25px;
+}
+
+.action-section h3 {
+    color: #667eea;
+    margin-bottom: 15px;
+    font-size: 1.1rem;
+}
+
+.link-display {
+    margin-bottom: 15px;
+}
+
+.link-display input {
+    width: 100%;
+    padding: 12px;
+    border: 2px solid #667eea;
+    border-radius: 8px;
+    font-family: 'Monaco', 'Courier New', monospace;
+    font-size: 0.9rem;
+    background: #f8f9ff;
+}
+
+.button-group {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.btn-success {
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+}
+
+.btn-info {
+    background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+    color: white;
+}
+
+.btn-disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.modal-message {
+    margin-top: 15px;
+    padding: 12px;
+    border-radius: 8px;
+    display: none;
+    animation: slideInRight 0.3s ease-out;
+}
+
+.modal-footer {
+    padding: 20px 30px;
+    border-top: 1px solid #e0e0e0;
+    text-align: right;
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+    .modal-content {
+        width: 95%;
+        max-height: 95vh;
+    }
+
+    .button-group {
+        grid-template-columns: 1fr;
+    }
+
+    .modal-body {
+        padding: 20px;
+    }
 }
 </style>
 {% endblock %}

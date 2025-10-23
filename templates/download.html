@@ -3,6 +3,37 @@
 {% block title %}下载文件 - E2EE 文件传输{% endblock %}
 
 {% block content %}
+<!-- 状态时间线 -->
+<div class="card status-timeline-card">
+    <h3>📊 传输进度</h3>
+    <div class="timeline-horizontal">
+        <div class="timeline-step completed">
+            <div class="step-marker">✓</div>
+            <div class="step-label">链接已创建</div>
+        </div>
+        <div class="timeline-line completed"></div>
+
+        <div class="timeline-step completed">
+            <div class="step-marker">✓</div>
+            <div class="step-label">文件已上传</div>
+        </div>
+        <div class="timeline-line completed"></div>
+
+        <div class="timeline-step active">
+            <div class="step-marker">
+                <div class="pulse"></div>
+            </div>
+            <div class="step-label">等待下载</div>
+        </div>
+        <div class="timeline-line"></div>
+
+        <div class="timeline-step">
+            <div class="step-marker">○</div>
+            <div class="step-label">传输完成</div>
+        </div>
+    </div>
+</div>
+
 <div class="card">
     <h2>📥 接收加密文件</h2>
     <p>有人向你发送了加密文件，请上传你的私钥进行解密。</p>
@@ -84,8 +115,10 @@
             <p><strong>大小：</strong><span id="successFileSize"></span></p>
         </div>
 
-        <button class="btn" onclick="location.href='/'">
-            🏠 返回首页
+        <div style="margin-top: 20px;">
+            <a href="/" class="btn btn-secondary" style="display: inline-block;">🏠 返回首页</a>
+        </div>
+    </div>🏠 返回首页
         </button>
     </div>
 </div>
@@ -174,66 +207,77 @@ async function startDecryption() {
         return;
     }
 
+    // 切换到解密界面
     document.getElementById('step-upload-key').style.display = 'none';
     document.getElementById('step-decrypting').style.display = 'block';
 
     try {
+        const isLargeFile = fileInfo.file_size > 50 * 1024 * 1024; // 50MB 以上使用分块
+
         // 1. 下载加密文件
-        updateProgress(20, '正在下载加密文件...');
+        updateProgress(10, '正在下载加密文件...');
         const fileResponse = await fetch(`/api/download/${urlToken}`);
-        if (!fileResponse.ok) throw new Error('下载加密文件失败');
+        if (!fileResponse.ok) {
+            throw new Error('下载加密文件失败');
+        }
 
-        const encryptedData = await fileResponse.arrayBuffer();
-        console.log('✅ 加密文件下载完成');
+        // 使用流式读取（支持大文件）
+        const reader = fileResponse.body.getReader();
+        const chunks = [];
+        let receivedLength = 0;
 
-        // 2. 读取元数据（前8字节）
-        updateProgress(30, '正在分析文件格式...');
-        const metadata = new Uint8Array(encryptedData.slice(0, 8));
-        const dataView = new DataView(metadata.buffer);
-        const magicNumber = dataView.getUint32(0, false);
-        const chunkCount = dataView.getUint32(4, false);
+        while(true) {
+            const {done, value} = await reader.read();
+            if (done) break;
 
-        const isChunkedEncryption = (magicNumber === 0x43484E4B); // "CHNK"
+            chunks.push(value);
+            receivedLength += value.length;
 
-        console.log(`文件格式: ${isChunkedEncryption ? '分块加密' : '整体加密'}`);
+            // 更新下载进度
+            const downloadPercent = Math.round(receivedLength / fileInfo.file_size * 100);
+            updateProgress(10 + downloadPercent * 0.2, `下载中... ${downloadPercent}%`);
+        }
 
-        // 3. 提取 IV（跳过元数据，前12字节是IV）
-        const iv = new Uint8Array(encryptedData.slice(8, 20));
-        const encryptedFile = encryptedData.slice(20);
+        // 合并下载的数据
+        const encryptedData = new Uint8Array(receivedLength);
+        let position = 0;
+        for(const chunk of chunks) {
+            encryptedData.set(chunk, position);
+            position += chunk.length;
+        }
 
-        // 4. 获取并解密 AES 密钥
+        // 2. 提取 IV 和密文
+        updateProgress(35, '正在提取加密参数...');
+        const iv = encryptedData.slice(0, 12);
+        const encryptedFile = encryptedData.slice(12);
+
+        // 3. 获取加密的 AES 密钥
         updateProgress(40, '正在获取加密密钥...');
         const keyResponse = await fetch(`/api/get-encrypted-key/${urlToken}`);
-        if (!keyResponse.ok) throw new Error('获取加密密钥失败');
-
+        if (!keyResponse.ok) {
+            throw new Error('获取加密密钥失败');
+        }
         const keyData = await keyResponse.json();
         const encryptedAESKey = base64ToArrayBuffer(keyData.encrypted_aes_key);
 
-        updateProgress(60, '正在解密传输密钥...');
+        // 4. 使用私钥解密 AES 密钥
+        updateProgress(50, '正在解密传输密钥...');
         const aesKey = await decryptAESKeyWithRSA(encryptedAESKey, privateKey);
         console.log('✅ AES 密钥解密成功');
 
+        // 5. 解密文件
         let decryptedFile;
 
-        if (isChunkedEncryption) {
-            // 5a. 分块解密
-            updateProgress(70, `正在解密文件（${chunkCount} 个分块）...`);
+        if (isLargeFile) {
+            // 大文件：分块解密
+            updateProgress(55, '正在解密大文件（分块处理）...');
 
-            // 需要知道每个分块的大小，这里假设除最后一块外都是 5MB 加密后的大小
-            const CHUNK_SIZE = 5 * 1024 * 1024;
-            const ENCRYPTED_CHUNK_SIZE = CHUNK_SIZE + 16; // AES-GCM 会增加 16 字节 tag
-
+            // 将加密数据分块
+            const CHUNK_SIZE = 5 * 1024 * 1024 + 16; // 5MB + GCM tag
             const encryptedChunks = [];
-            let offset = 0;
 
-            for (let i = 0; i < chunkCount; i++) {
-                const chunkSize = (i === chunkCount - 1)
-                    ? encryptedFile.byteLength - offset  // 最后一块
-                    : ENCRYPTED_CHUNK_SIZE;
-
-                const chunk = new Uint8Array(encryptedFile.slice(offset, offset + chunkSize));
-                encryptedChunks.push(chunk);
-                offset += chunkSize;
+            for (let i = 0; i < encryptedFile.length; i += CHUNK_SIZE) {
+                encryptedChunks.push(encryptedFile.slice(i, Math.min(i + CHUNK_SIZE, encryptedFile.length)));
             }
 
             decryptedFile = await decryptFileInChunks(
@@ -241,14 +285,13 @@ async function startDecryption() {
                 aesKey,
                 iv,
                 (percent) => {
-                    updateProgress(70 + percent * 0.2, `正在解密... ${percent}%`);
+                    updateProgress(55 + percent * 0.3, `解密中... ${percent}%`);
                 }
             );
-
         } else {
-            // 5b. 整体解密
-            updateProgress(80, '正在解密文件内容...');
-            decryptedFile = await decryptFileWithAES(encryptedFile, aesKey, iv);
+            // 小文件：整体解密
+            updateProgress(60, '正在解密文件内容...');
+            decryptedFile = await decryptFileWithAES(encryptedFile.buffer, aesKey, iv);
         }
 
         console.log('✅ 文件解密成功');
@@ -259,12 +302,17 @@ async function startDecryption() {
         downloadFile(blob, fileInfo.original_filename);
 
         // 7. 通知服务器删除文件
-        updateProgress(100, '正在清理服务器文件...');
+        updateProgress(95, '正在清理服务器文件...');
         await fetch(`/api/confirm-download/${urlToken}`, { method: 'POST' });
+
+        updateProgress(100, '完成！');
 
         // 显示成功界面
         document.getElementById('successFilename').textContent = fileInfo.original_filename;
         document.getElementById('successFileSize').textContent = formatFileSize(fileInfo.file_size);
+
+        // 更新时间线为全部完成
+        updateTimelineCompleted();
 
         setTimeout(() => {
             document.getElementById('step-decrypting').style.display = 'none';
@@ -281,11 +329,8 @@ async function startDecryption() {
 }
 
 function updateProgress(percent, text) {
-    // 将传入的百分比格式化为最多两位小数
-    const formattedPercent = parseFloat(percent.toFixed(2));
-
-    document.getElementById('progressFill').style.width = formattedPercent + '%';
-    document.getElementById('progressText').textContent = formattedPercent + '%';
+    document.getElementById('progressFill').style.width = percent + '%';
+    document.getElementById('progressText').textContent = percent + '%';
     document.getElementById('decryptStatusText').textContent = text;
 }
 
@@ -293,6 +338,22 @@ function showError(message) {
     document.getElementById('status-message').innerHTML = `
         <div class="message error">❌ ${message}</div>
     `;
+}
+
+function updateTimelineToCompleted() {
+    const steps = document.querySelectorAll('.timeline-step');
+    const lines = document.querySelectorAll('.timeline-line');
+
+    steps.forEach(step => {
+        step.classList.remove('active');
+        step.classList.add('completed');
+        const marker = step.querySelector('.step-marker');
+        marker.innerHTML = '✓';
+    });
+
+    lines.forEach(line => {
+        line.classList.add('completed');
+    });
 }
 </script>
 
@@ -439,6 +500,153 @@ function showError(message) {
 
 .info-box strong {
     color: #764ba2;
+}
+
+.button-group {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+@media (max-width: 768px) {
+    .button-group {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 状态时间线样式 */
+.status-timeline-card {
+    background: linear-gradient(135deg, #f0f4ff 0%, #e8f0ff 100%);
+    border-left: 4px solid #667eea;
+    margin-bottom: 20px;
+}
+
+.status-timeline-card h3 {
+    color: #667eea;
+    margin-bottom: 20px;
+    font-size: 1.2rem;
+}
+
+.timeline-horizontal {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+}
+
+.timeline-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;
+}
+
+.step-marker {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #e0e0e0;
+    color: #999;
+    font-weight: bold;
+    font-size: 1.2rem;
+    border: 3px solid white;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+}
+
+.timeline-step.completed .step-marker {
+    background: linear-gradient(135deg, #28a745, #20c997);
+    color: white;
+}
+
+.timeline-step.active .step-marker {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    animation: markerPulse 2s ease-in-out infinite;
+}
+
+@keyframes markerPulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3); }
+    50% { transform: scale(1.1); box-shadow: 0 4px 15px rgba(102, 126, 234, 0.6); }
+}
+
+.pulse {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: white;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(0.8); opacity: 1; }
+    50% { transform: scale(1.2); opacity: 0.7; }
+}
+
+.step-label {
+    font-size: 0.85rem;
+    color: #666;
+    text-align: center;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.timeline-step.completed .step-label {
+    color: #28a745;
+}
+
+.timeline-step.active .step-label {
+    color: #667eea;
+}
+
+.timeline-line {
+    flex: 1;
+    height: 3px;
+    background: #e0e0e0;
+    margin: 0 10px;
+    position: relative;
+    top: -20px;
+}
+
+.timeline-line.completed {
+    background: linear-gradient(90deg, #28a745, #20c997);
+}
+
+/* 响应式优化 */
+@media (max-width: 768px) {
+    .timeline-horizontal {
+        overflow-x: auto;
+        justify-content: flex-start;
+        padding-bottom: 10px;
+    }
+
+    .timeline-step {
+        flex: 0 0 80px;
+    }
+
+    .step-marker {
+        width: 40px;
+        height: 40px;
+        font-size: 1rem;
+    }
+
+    .step-label {
+        font-size: 0.75rem;
+    }
+
+    .timeline-line {
+        min-width: 30px;
+        top: -15px;
+    }
+
+    .button-group {
+        grid-template-columns: 1fr;
+    }
 }
 </style>
 {% endblock %}

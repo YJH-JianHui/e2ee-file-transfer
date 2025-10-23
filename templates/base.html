@@ -12,10 +12,6 @@
         <div class="container">
             <h1>🔐 端到端加密文件传输</h1>
             <p class="subtitle">零知识架构 · 绝对安全</p>
-            <nav class="header-nav">
-                <a href="/" class="nav-link">🏠 首页</a>
-                <a href="/stats" class="nav-link">📊 统计</a>
-            </nav>
         </div>
     </header>
 
@@ -26,36 +22,10 @@
     <footer>
         <div class="container">
             <p>所有文件均经过端到端加密，服务器无法访问明文数据</p>
-            <p>文件将在 24 小时后或下载后自动销毁 · 支持最大 2GB 文件</p>
+            <p>文件将在 24 小时后或下载后自动销毁 · 支持最大 5GB 文件</p>
         </div>
     </footer>
 
     {% block extra_scripts %}{% endblock %}
 </body>
 </html>
-
-<style>
-.header-nav {
-    margin-top: 20px;
-    display: flex;
-    justify-content: center;
-    gap: 15px;
-}
-
-.nav-link {
-    color: white;
-    text-decoration: none;
-    padding: 8px 20px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 20px;
-    font-size: 0.95rem;
-    transition: all 0.3s ease;
-    backdrop-filter: blur(10px);
-}
-
-.nav-link:hover {
-    background: rgba(255, 255, 255, 0.3);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-}
-</style>

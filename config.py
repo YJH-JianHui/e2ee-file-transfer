@@ -10,7 +10,7 @@ DATABASE_PATH = DATABASE_DIR / "database.db"
 
 # 文件存储配置
 UPLOAD_DIR = BASE_DIR / "uploads"
-MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2GB (优化后支持大文件)
+MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024  # 5GB (优化后支持大文件)
 
 # 分块上传配置
 CHUNK_SIZE = 5 * 1024 * 1024  # 5MB per chunk (用于分块加密和上传)
@@ -24,6 +24,7 @@ BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 URL_TOKEN_LENGTH = 16  # 接收码长度
 
 # 安全配置
+STATS_PASSWORD = os.getenv("STATS_PASSWORD", "admin123")  # 统计页面密码（建议通过环境变量设置）
 ALLOWED_EXTENSIONS = {
     # 文档类
     'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md',
