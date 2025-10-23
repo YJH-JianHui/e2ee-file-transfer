@@ -31,25 +31,37 @@
             <div class="stat-card">
                 <div class="stat-icon">📦</div>
                 <div class="stat-value" id="totalTransfers">-</div>
-                <div class="stat-label">总传输次数</div>
+                <div class="stat-label">总传输数</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon">✅</div>
+                <div class="stat-value" id="completedTransfers">-</div>
+                <div class="stat-label">已完成</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon">⏳</div>
+                <div class="stat-value" id="pendingTransfers">-</div>
+                <div class="stat-label">待下载</div>
             </div>
 
             <div class="stat-card">
                 <div class="stat-icon">💾</div>
                 <div class="stat-value" id="totalSize">-</div>
-                <div class="stat-label">总传输数据</div>
+                <div class="stat-label">总数据量</div>
             </div>
 
             <div class="stat-card">
-                <div class="stat-icon">✅</div>
-                <div class="stat-value" id="downloadedCount">-</div>
-                <div class="stat-label">已完成传输</div>
+                <div class="stat-icon">📈</div>
+                <div class="stat-value" id="todayCreated">-</div>
+                <div class="stat-label">今日创建</div>
             </div>
 
             <div class="stat-card">
-                <div class="stat-icon">⚡</div>
-                <div class="stat-value" id="activeCount">-</div>
-                <div class="stat-label">活跃传输</div>
+                <div class="stat-icon">📥</div>
+                <div class="stat-value" id="todayDownloaded">-</div>
+                <div class="stat-label">今日下载</div>
             </div>
         </div>
     </div>
@@ -65,7 +77,7 @@
     <div class="card">
         <h2>🔍 查询特定传输日志</h2>
         <div class="log-search">
-            <input type="text" id="tokenInput" placeholder="输入 URL Token (例如: abc123...)">
+            <input type="text" id="tokenInput" placeholder="输入 Token (例如: abc123...)">
             <button class="btn" onclick="searchLogs()">🔍 查询</button>
         </div>
         <div id="search-results"></div>
@@ -154,13 +166,26 @@ async function loadStatistics() {
         const response = await fetch('/api/statistics');
         const data = await response.json();
 
+        // 更新所有统计卡片数据
         document.getElementById('totalTransfers').textContent = data.total_transfers;
+        document.getElementById('completedTransfers').textContent = data.completed_transfers;
+        document.getElementById('pendingTransfers').textContent = data.pending_transfers;
         document.getElementById('totalSize').textContent = formatFileSize(data.total_size);
-        document.getElementById('downloadedCount').textContent = data.downloaded_count;
-        document.getElementById('activeCount').textContent = data.active_count;
+        document.getElementById('todayCreated').textContent = data.today_created;
+        document.getElementById('todayDownloaded').textContent = data.today_downloaded;
     } catch (error) {
         console.error('加载统计失败:', error);
+        showError('无法加载统计数据');
     }
+}
+
+// 显示错误信息
+function showError(message) {
+    const statCards = document.querySelectorAll('.stat-value');
+    statCards.forEach(card => {
+        card.textContent = '错误';
+        card.style.color = '#dc3545';
+    });
 }
 
 async function loadRecentLogs() {
@@ -175,34 +200,37 @@ async function loadRecentLogs() {
             return;
         }
 
-        let html = '<table class="log-table">';
-        html += '<thead><tr><th>时间</th><th>Token</th><th>操作</th><th>详情</th></tr></thead>';
+        let html = '<div class="table-container"><table class="log-table">';
+        html += '<thead><tr><th class="col-time">时间</th><th class="col-token">Token</th><th class="col-action">操作</th><th class="col-details">详情</th></tr></thead>';
         html += '<tbody>';
 
         for (const log of logs) {
             const time = new Date(log.created_at).toLocaleString('zh-CN');
-            const action = getActionLabel(log.action);
+            const actionEmoji = getActionEmoji(log.action);
             html += `
                 <tr>
-                    <td>${time}</td>
-                    <td><code>${log.url_token.substring(0, 8)}...</code></td>
-                    <td><span class="action-badge ${log.action}">${action}</span></td>
-                    <td>${log.details || '-'}</td>
+                    <td class="col-time">${time}</td>
+                    <td class="col-token"><code>${log.url_token}</code></td>
+                    <td class="col-action">${actionEmoji} ${getActionLabel(log.action)}</td>
+                    <td class="col-details">${log.details || '-'}</td>
                 </tr>
             `;
         }
 
-        html += '</tbody></table>';
+        html += '</tbody></table></div>';
         logsContainer.innerHTML = html;
     } catch (error) {
         console.error('加载日志失败:', error);
+        document.getElementById('recent-logs').innerHTML = `
+            <div class="message error">无法加载操作日志</div>
+        `;
     }
 }
 
 async function searchLogs() {
     const token = document.getElementById('tokenInput').value.trim();
     if (!token) {
-        alert('请输入 URL Token');
+        alert('请输入 Token');
         return;
     }
 
@@ -221,24 +249,24 @@ async function searchLogs() {
         }
 
         let html = '<h3>查询结果</h3>';
-        html += '<table class="log-table">';
-        html += '<thead><tr><th>时间</th><th>操作</th><th>详情</th><th>IP地址</th></tr></thead>';
+        html += '<div class="table-container"><table class="log-table">';
+        html += '<thead><tr><th class="col-time">时间</th><th class="col-action">操作</th><th class="col-details">详情</th><th class="col-ip">IP地址</th></tr></thead>';
         html += '<tbody>';
 
         for (const log of logs) {
             const time = new Date(log.created_at).toLocaleString('zh-CN');
-            const action = getActionLabel(log.action);
+            const actionEmoji = getActionEmoji(log.action);
             html += `
                 <tr>
-                    <td>${time}</td>
-                    <td><span class="action-badge ${log.action}">${action}</span></td>
-                    <td>${log.details || '-'}</td>
-                    <td>${log.ip_address || '-'}</td>
+                    <td class="col-time">${time}</td>
+                    <td class="col-action">${actionEmoji} ${getActionLabel(log.action)}</td>
+                    <td class="col-details">${log.details || '-'}</td>
+                    <td class="col-ip">${log.ip_address || '-'}</td>
                 </tr>
             `;
         }
 
-        html += '</tbody></table>';
+        html += '</tbody></table></div>';
         resultsContainer.innerHTML = html;
     } catch (error) {
         console.error('查询失败:', error);
@@ -246,23 +274,43 @@ async function searchLogs() {
     }
 }
 
+function getActionEmoji(action) {
+    const emojiMap = {
+        'created': '🔑',
+        'uploaded': '📤',
+        'downloaded': '📥',
+        'expired': '⏰',
+        'deleted': '🗑️'
+    };
+    return emojiMap[action] || '📝';
+}
+
 function getActionLabel(action) {
     const labels = {
         'created': '创建链接',
         'uploaded': '上传文件',
         'downloaded': '下载文件',
+        'expired': '文件过期',
         'deleted': '删除文件'
     };
     return labels[action] || action;
 }
 
 function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
+    if (bytes === 0) return '0 B';
     const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
 }
+
+// 每 30 秒刷新一次统计数据
+setInterval(() => {
+    if (sessionStorage.getItem('stats_authenticated') === 'true') {
+        loadStatistics();
+        loadRecentLogs();
+    }
+}, 30000);
 </script>
 
 <style>
@@ -331,55 +379,78 @@ function formatFileSize(bytes) {
     opacity: 0.9;
 }
 
+/* 表格容器 */
+.table-container {
+    width: 100%;
+    overflow-x: auto;
+    margin-top: 20px;
+    border-radius: 8px;
+    border: 1px solid #e0e0e0;
+}
+
 .log-table {
     width: 100%;
     border-collapse: collapse;
-    margin-top: 20px;
+    min-width: 800px;
 }
 
 .log-table th,
 .log-table td {
-    padding: 12px;
+    padding: 12px 15px;
     text-align: left;
     border-bottom: 1px solid #e0e0e0;
+    white-space: nowrap;
 }
 
 .log-table th {
     background: #f8f9fa;
     font-weight: 600;
     color: #667eea;
+    position: sticky;
+    top: 0;
 }
 
 .log-table tr:hover {
     background: #f8f9ff;
 }
 
-.action-badge {
-    display: inline-block;
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-size: 0.85rem;
-    font-weight: 600;
+/* 列宽优化 */
+.col-time {
+    width: 180px;
+    min-width: 180px;
 }
 
-.action-badge.created {
-    background: #d1ecf1;
-    color: #0c5460;
+.col-token {
+    min-width: 200px;
+    max-width: 300px;
+    white-space: normal;
+    word-break: break-all;
 }
 
-.action-badge.uploaded {
-    background: #d4edda;
-    color: #155724;
+.col-action {
+    width: 120px;
+    min-width: 120px;
 }
 
-.action-badge.downloaded {
-    background: #cce5ff;
-    color: #004085;
+.col-details {
+    min-width: 200px;
+    white-space: normal;
+    word-break: break-word;
 }
 
-.action-badge.deleted {
-    background: #f8d7da;
-    color: #721c24;
+.col-ip {
+    width: 140px;
+    min-width: 140px;
+}
+
+.col-token code {
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 0.8rem;
+    background: #f1f3f4;
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid #e0e0e0;
+    line-height: 1.3;
 }
 
 .log-search {
@@ -405,6 +476,57 @@ function formatFileSize(bytes) {
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+}
+
+/* 响应式优化 */
+@media (max-width: 768px) {
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .stat-card {
+        padding: 20px 15px;
+    }
+
+    .stat-value {
+        font-size: 2rem;
+    }
+
+    .table-container {
+        font-size: 0.9rem;
+    }
+
+    .log-table th,
+    .log-table td {
+        padding: 10px 12px;
+    }
+
+    .col-time {
+        width: 150px;
+        min-width: 150px;
+    }
+
+    .col-token {
+        width: 120px;
+        min-width: 120px;
+        max-width: 120px;
+    }
+}
+
+/* 小屏幕优化 */
+@media (max-width: 480px) {
+    .stats-grid {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+
+    .stat-card {
+        padding: 20px;
+    }
+
+    .stat-value {
+        font-size: 2rem;
+    }
 }
 </style>
 {% endblock %}
