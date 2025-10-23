@@ -78,15 +78,6 @@
                 📂 选择私钥文件
             </button>
         </div>
-
-        <div class="message info">
-            <strong>⚠️ 安全提示：</strong>
-            <ul>
-                <li>私钥文件<strong>不会上传</strong>到服务器</li>
-                <li>所有解密操作在<strong>你的浏览器</strong>中完成</li>
-                <li>解密后服务器文件将<strong>立即删除</strong></li>
-            </ul>
-        </div>
     </div>
 
     <!-- 步骤 2: 解密中 -->
@@ -167,7 +158,7 @@
         <div class="feature-item">
             <div class="feature-icon">🚫</div>
             <h4>零知识</h4>
-            <p>服务器从未接触过明文数据或私钥</p>
+            <p>服务器或网络节点从未接触过明文数据或私钥</p>
         </div>
     </div>
 </div>
@@ -447,7 +438,6 @@ function updateTimelineCompleted() {
 
 .file-info-box {
     background: #f0f4ff;
-    border-left: 4px solid #667eea;
     padding: 20px;
     margin: 20px 0;
     border-radius: 8px;
@@ -518,31 +508,34 @@ function updateTimelineCompleted() {
 
 .security-features {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 20px;
     margin-top: 20px;
 }
 
 .feature-item {
     text-align: center;
-    padding: 20px;
+    padding: 25px 20px;
     background: #f8f9fa;
-    border-radius: 8px;
+    border-radius: 10px;
+    min-width: 280px;
 }
 
 .feature-icon {
     font-size: 2.5rem;
-    margin-bottom: 10px;
+    margin-bottom: 15px;
 }
 
 .feature-item h4 {
     color: #667eea;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
+    font-size: 1.1rem;
 }
 
 .feature-item p {
     font-size: 0.9rem;
     color: #666;
+    line-height: 1.5;
 }
 
 .info-box {
@@ -570,7 +563,6 @@ function updateTimelineCompleted() {
 /* 状态时间线样式 */
 .status-timeline-card {
     background: linear-gradient(135deg, #f0f4ff 0%, #e8f0ff 100%);
-    border-left: 4px solid #667eea;
     margin-bottom: 20px;
 }
 
